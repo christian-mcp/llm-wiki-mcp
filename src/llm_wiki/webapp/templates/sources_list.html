@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+
+{% block title %}Sources — LLM-Wiki{% endblock %}
+
+{% block content %}
+
+<div class="mb-6">
+    <h1 class="text-3xl font-semibold text-white mb-1">Sources</h1>
+    <p class="text-sm text-[#9ca3af]">All source documents tracked in this wiki.</p>
+</div>
+
+<!-- Status filter tabs -->
+<div class="flex items-center gap-1 mb-6 border-b border-[#2a2e3a]">
+    {% set tabs = [
+        ('all', 'All', none),
+        ('pending', 'Pending', 'pending'),
+        ('ingested', 'Ingested', 'ingested'),
+        ('error', 'Errors', 'error'),
+    ] %}
+    {% for key, label, value in tabs %}
+        {% set href = '/sources' if value is none else '/sources?status=' ~ value %}
+        {% set is_active = (status_filter == value) or (status_filter is none and value is none) %}
+        <a href="{{ href }}"
+           class="px-4 py-2 text-sm font-medium border-b-2 transition
+                  {% if is_active %}border-[#7c8cff] text-white{% else %}border-transparent text-[#9ca3af] hover:text-white{% endif %}">
+            {{ label }}
+            <span class="ml-1 text-xs text-[#6b7280]">({{ status_counts[key] }})</span>
+        </a>
+    {% endfor %}
+</div>
+
+{% if sources %}
+<div class="bg-[#1c1f2a] border border-[#2a2e3a] rounded-lg overflow-hidden">
+    <table class="w-full">
+        <thead>
+            <tr class="border-b border-[#2a2e3a] bg-[#0f1117]">
+                <th class="px-4 py-3 text-left text-xs font-semibold text-[#9ca3af] uppercase tracking-wide w-12">#</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-[#9ca3af] uppercase tracking-wide">Path</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-[#9ca3af] uppercase tracking-wide w-20">Type</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-[#9ca3af] uppercase tracking-wide w-24">Size</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-[#9ca3af] uppercase tracking-wide w-28">Added</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-[#9ca3af] uppercase tracking-wide w-28">Status</th>
+            </tr>
+        </thead>
+        <tbody class="divide-y divide-[#2a2e3a]">
+            {% for row in sources %}
+            <tr class="hover:bg-[#0f1117] transition cursor-pointer" onclick="window.location='/sources/{{ row.id }}'">
+                <td class="px-4 py-3 text-sm font-mono text-[#7c8cff]">{{ row.id }}</td>
+                <td class="px-4 py-3 text-sm font-mono text-white">{{ row.relpath }}</td>
+                <td class="px-4 py-3 text-xs uppercase text-[#9ca3af]">{{ row.file_type }}</td>
+                <td class="px-4 py-3 text-sm text-right text-[#9ca3af]">{{ row.size_human }}</td>
+                <td class="px-4 py-3 text-sm text-[#9ca3af]">{{ row.added_short }}</td>
+                <td class="px-4 py-3">
+                    {% if row.status == 'ingested' %}
+                        <span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded bg-green-500/20 text-green-300">
+                            <span class="w-1.5 h-1.5 rounded-full bg-green-400"></span>
+                            ingested
+                        </span>
+                    {% elif row.status == 'pending' %}
+                        <span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded bg-yellow-500/20 text-yellow-300">
+                            <span class="w-1.5 h-1.5 rounded-full bg-yellow-400"></span>
+                            pending
+                        </span>
+                    {% elif row.status == 'error' %}
+                        <span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded bg-red-500/20 text-red-300">
+                            <span class="w-1.5 h-1.5 rounded-full bg-red-400"></span>
+                            error
+                        </span>
+                    {% else %}
+                        <span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded bg-gray-500/20 text-gray-300">
+                            {{ row.status }}
+                        </span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="bg-[#1c1f2a] border border-[#2a2e3a] rounded-lg p-12 text-center">
+    <div class="text-4xl mb-4">📭</div>
+    <div class="text-white font-medium mb-2">
+        {% if status_filter %}
+            No sources with status '{{ status_filter }}'
+        {% else %}
+            No sources tracked yet
+        {% endif %}
+    </div>
+    <div class="text-sm text-[#9ca3af]">
+        Add sources via the CLI: <code class="bg-[#0f1117] px-2 py-0.5 rounded text-[#9aa7ff]">wiki add &lt;file-or-folder&gt;</code>
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}

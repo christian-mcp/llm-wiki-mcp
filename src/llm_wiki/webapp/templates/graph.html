@@ -1,0 +1,323 @@
+{% extends "base.html" %}
+
+{% block title %}Graph — LLM-Wiki{% endblock %}
+
+{% block extra_head %}
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+    #graph-canvas {
+        width: 100%;
+        height: calc(100vh - 200px);
+        min-height: 500px;
+        background: #0f1117;
+        border: 1px solid #2a2e3a;
+        border-radius: 8px;
+        cursor: grab;
+    }
+    #graph-canvas:active {
+        cursor: grabbing;
+    }
+    .node {
+        cursor: pointer;
+        stroke: #161922;
+        stroke-width: 2px;
+        transition: stroke 150ms;
+    }
+    .node:hover {
+        stroke: #fff;
+        stroke-width: 3px;
+    }
+    .node.dimmed {
+        opacity: 0.15;
+    }
+    .node.highlight {
+        stroke: #7c8cff;
+        stroke-width: 3px;
+    }
+    .link {
+        stroke: #2a2e3a;
+        stroke-opacity: 0.6;
+        transition: stroke 150ms, stroke-opacity 150ms;
+    }
+    .link.dimmed {
+        stroke-opacity: 0.05;
+    }
+    .link.highlight {
+        stroke: #7c8cff;
+        stroke-opacity: 0.8;
+        stroke-width: 1.5px;
+    }
+    .node-label {
+        font-size: 11px;
+        fill: #9ca3af;
+        pointer-events: none;
+        text-anchor: middle;
+        font-family: -apple-system, system-ui, sans-serif;
+    }
+    .node-label.dimmed {
+        opacity: 0.15;
+    }
+    .node-label.visible {
+        fill: #e7e9f0;
+        font-weight: 500;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div class="mb-6 flex items-start justify-between">
+    <div>
+        <h1 class="text-3xl font-semibold text-white mb-1">Graph</h1>
+        <p class="text-sm text-[#9ca3af]">Interactive view of all wiki pages and their cross-references.</p>
+    </div>
+    <div class="flex items-center gap-3">
+        <input type="text"
+               id="graph-search"
+               placeholder="Search nodes…"
+               class="bg-[#1c1f2a] border border-[#2a2e3a] rounded-md px-3 py-1.5 text-sm text-white placeholder-[#6b7280] focus:border-[#7c8cff] focus:outline-none">
+        <button id="reset-btn"
+                class="text-xs px-3 py-1.5 bg-[#1c1f2a] border border-[#2a2e3a] rounded-md text-[#9ca3af] hover:text-white hover:border-[#7c8cff] transition">
+            Reset view
+        </button>
+    </div>
+</div>
+
+<!-- Stats + legend bar -->
+<div class="bg-[#1c1f2a] border border-[#2a2e3a] rounded-lg px-4 py-3 mb-3 flex items-center justify-between">
+    <div id="graph-stats" class="text-xs text-[#9ca3af]">Loading…</div>
+    <div class="flex items-center gap-4 text-xs">
+        <div class="flex items-center gap-1.5">
+            <div class="w-2.5 h-2.5 rounded-full bg-[#8b5cf6]"></div>
+            <span class="text-[#9ca3af]">Sources</span>
+        </div>
+        <div class="flex items-center gap-1.5">
+            <div class="w-2.5 h-2.5 rounded-full bg-[#f59e0b]"></div>
+            <span class="text-[#9ca3af]">Entities</span>
+        </div>
+        <div class="flex items-center gap-1.5">
+            <div class="w-2.5 h-2.5 rounded-full bg-[#10b981]"></div>
+            <span class="text-[#9ca3af]">Concepts</span>
+        </div>
+        <div class="flex items-center gap-1.5">
+            <div class="w-2.5 h-2.5 rounded-full bg-[#ec4899]"></div>
+            <span class="text-[#9ca3af]">Synthesis</span>
+        </div>
+    </div>
+</div>
+
+<svg id="graph-canvas"></svg>
+
+<!-- Hover details panel -->
+<div id="hover-info"
+     class="hidden fixed bottom-6 right-6 bg-[#1c1f2a] border border-[#2a2e3a] rounded-lg p-4 max-w-xs shadow-xl z-50">
+    <div id="hover-title" class="text-sm font-semibold text-white mb-1"></div>
+    <div id="hover-type" class="text-xs text-[#9ca3af] mb-2"></div>
+    <div id="hover-degree" class="text-xs text-[#6b7280]"></div>
+</div>
+
+<script>
+(async function() {
+    const svg = d3.select('#graph-canvas');
+    const statsEl = document.getElementById('graph-stats');
+
+    // Fetch the graph data
+    let data;
+    try {
+        const response = await fetch('/api/graph');
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        data = await response.json();
+    } catch (err) {
+        statsEl.textContent = 'Failed to load graph data: ' + err.message;
+        return;
+    }
+
+    if (data.nodes.length === 0) {
+        statsEl.textContent = 'No pages yet. Add and ingest sources first.';
+        svg.append('text')
+            .attr('x', '50%').attr('y', '50%')
+            .attr('text-anchor', 'middle')
+            .attr('fill', '#6b7280')
+            .attr('font-size', 14)
+            .text('Empty wiki — nothing to graph.');
+        return;
+    }
+
+    // Render stats line
+    const tc = data.stats.type_counts;
+    const parts = [];
+    if (tc.sources)   parts.push(`${tc.sources} sources`);
+    if (tc.entities)  parts.push(`${tc.entities} entities`);
+    if (tc.concepts)  parts.push(`${tc.concepts} concepts`);
+    if (tc.synthesis) parts.push(`${tc.synthesis} synthesis`);
+    statsEl.innerHTML = `<span class="text-white font-semibold">${data.stats.node_count}</span> nodes · <span class="text-white font-semibold">${data.stats.edge_count}</span> edges · ${parts.join(' · ')}`;
+
+    // Setup SVG dimensions
+    const container = svg.node().parentElement;
+    let width = svg.node().clientWidth;
+    let height = svg.node().clientHeight;
+
+    // Group for zoom/pan
+    const g = svg.append('g');
+
+    // Force simulation
+    const simulation = d3.forceSimulation(data.nodes)
+        .force('link', d3.forceLink(data.edges)
+            .id(d => d.id)
+            .distance(d => 60 + (d.source.radius + d.target.radius)))
+        .force('charge', d3.forceManyBody().strength(-220))
+        .force('center', d3.forceCenter(width / 2, height / 2))
+        .force('collide', d3.forceCollide().radius(d => d.radius + 4));
+
+    // Draw links
+    const link = g.append('g')
+        .selectAll('line')
+        .data(data.edges)
+        .join('line')
+        .attr('class', 'link')
+        .attr('stroke-width', 1);
+
+    // Draw nodes
+    const node = g.append('g')
+        .selectAll('circle')
+        .data(data.nodes)
+        .join('circle')
+        .attr('class', 'node')
+        .attr('r', d => d.radius)
+        .attr('fill', d => d.color)
+        .call(d3.drag()
+            .on('start', dragStarted)
+            .on('drag', dragged)
+            .on('end', dragEnded));
+
+    // Draw labels — only visible for large nodes by default
+    const label = g.append('g')
+        .selectAll('text')
+        .data(data.nodes)
+        .join('text')
+        .attr('class', d => d.degree >= 3 ? 'node-label visible' : 'node-label')
+        .attr('dy', d => d.radius + 12)
+        .text(d => d.title);
+
+    // Hover behavior
+    const hoverInfo = document.getElementById('hover-info');
+    const hoverTitle = document.getElementById('hover-title');
+    const hoverType = document.getElementById('hover-type');
+    const hoverDegree = document.getElementById('hover-degree');
+
+    node.on('mouseenter', function(event, d) {
+        // Highlight this node and its neighbors
+        const neighbors = new Set([d.id]);
+        data.edges.forEach(e => {
+            const sid = typeof e.source === 'object' ? e.source.id : e.source;
+            const tid = typeof e.target === 'object' ? e.target.id : e.target;
+            if (sid === d.id) neighbors.add(tid);
+            if (tid === d.id) neighbors.add(sid);
+        });
+
+        node.classed('dimmed', n => !neighbors.has(n.id));
+        node.classed('highlight', n => n.id === d.id);
+        label.classed('dimmed', n => !neighbors.has(n.id));
+        link.classed('dimmed', e => {
+            const sid = typeof e.source === 'object' ? e.source.id : e.source;
+            const tid = typeof e.target === 'object' ? e.target.id : e.target;
+            return !(sid === d.id || tid === d.id);
+        });
+        link.classed('highlight', e => {
+            const sid = typeof e.source === 'object' ? e.source.id : e.source;
+            const tid = typeof e.target === 'object' ? e.target.id : e.target;
+            return sid === d.id || tid === d.id;
+        });
+
+        // Show hover panel
+        hoverTitle.textContent = d.title;
+        hoverType.textContent = d.type + ' · ' + d.path;
+        hoverDegree.textContent = `${d.degree} connection${d.degree === 1 ? '' : 's'}`;
+        hoverInfo.classList.remove('hidden');
+    });
+
+    node.on('mouseleave', function(event, d) {
+        node.classed('dimmed', false).classed('highlight', false);
+        label.classed('dimmed', false);
+        link.classed('dimmed', false).classed('highlight', false);
+        hoverInfo.classList.add('hidden');
+    });
+
+    // Click → if it's a source page, navigate to its detail (best we have)
+    node.on('click', function(event, d) {
+        // Sources have a numeric ID lookup we'd need; for now just log
+        // and rely on the fact that page links are visible in the panel
+        console.log('Clicked:', d.path);
+    });
+
+    // Tick handler
+    simulation.on('tick', () => {
+        link
+            .attr('x1', d => d.source.x)
+            .attr('y1', d => d.source.y)
+            .attr('x2', d => d.target.x)
+            .attr('y2', d => d.target.y);
+        node
+            .attr('cx', d => d.x)
+            .attr('cy', d => d.y);
+        label
+            .attr('x', d => d.x)
+            .attr('y', d => d.y);
+    });
+
+    // Drag handlers
+    function dragStarted(event, d) {
+        if (!event.active) simulation.alphaTarget(0.3).restart();
+        d.fx = d.x;
+        d.fy = d.y;
+    }
+    function dragged(event, d) {
+        d.fx = event.x;
+        d.fy = event.y;
+    }
+    function dragEnded(event, d) {
+        if (!event.active) simulation.alphaTarget(0);
+        d.fx = null;
+        d.fy = null;
+    }
+
+    // Zoom + pan
+    const zoom = d3.zoom()
+        .scaleExtent([0.2, 5])
+        .on('zoom', (event) => {
+            g.attr('transform', event.transform);
+        });
+    svg.call(zoom);
+
+    // Reset button
+    document.getElementById('reset-btn').addEventListener('click', () => {
+        svg.transition().duration(500)
+            .call(zoom.transform, d3.zoomIdentity);
+        simulation.alpha(0.5).restart();
+    });
+
+    // Search behavior — highlight matching nodes
+    const searchInput = document.getElementById('graph-search');
+    searchInput.addEventListener('input', (e) => {
+        const q = e.target.value.trim().toLowerCase();
+        if (!q) {
+            node.classed('dimmed', false).classed('highlight', false);
+            label.classed('dimmed', false);
+            return;
+        }
+        node.classed('dimmed', d => !d.title.toLowerCase().includes(q) && !d.path.toLowerCase().includes(q));
+        node.classed('highlight', d => d.title.toLowerCase().includes(q) || d.path.toLowerCase().includes(q));
+        label.classed('dimmed', d => !d.title.toLowerCase().includes(q) && !d.path.toLowerCase().includes(q));
+    });
+
+    // Handle window resize
+    window.addEventListener('resize', () => {
+        width = svg.node().clientWidth;
+        height = svg.node().clientHeight;
+        simulation.force('center', d3.forceCenter(width / 2, height / 2));
+        simulation.alpha(0.3).restart();
+    });
+})();
+</script>
+
+{% endblock %}

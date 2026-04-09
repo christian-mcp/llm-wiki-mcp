@@ -1133,6 +1133,108 @@ def lint(
         raise typer.Exit(code=1)
 
 
+# ---------------------------------------------------------------------------
+# Stage 6 — web UI
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def serve(
+    host: str = typer.Option(
+        "127.0.0.1",
+        "--host",
+        help="Bind address. Default 127.0.0.1 (localhost only).",
+    ),
+    port: int = typer.Option(
+        8000,
+        "--port",
+        "-p",
+        help="Port to listen on.",
+    ),
+    no_browser: bool = typer.Option(
+        False,
+        "--no-browser",
+        help="Don't auto-open the browser on startup.",
+    ),
+    reload: bool = typer.Option(
+        False,
+        "--reload",
+        help="Auto-reload on code changes (development only).",
+    ),
+) -> None:
+    """Start the LLM-Wiki web UI on localhost.
+
+    The UI provides a dashboard, source browser, ingest interface, query
+    interface, and lint dashboard. It runs locally and binds to 127.0.0.1
+    by default — no external access, no auth required.
+    """
+    paths = _resolve_root_or_die()
+
+    # Verify the project looks healthy before launching
+    if not paths.wiki.exists():
+        _err(f"Wiki folder not found at {paths.wiki}")
+        _hint("Run `wiki init` first to scaffold the project.")
+        raise typer.Exit(code=1)
+
+    # Lazy import — avoid loading FastAPI/uvicorn unless we're actually serving
+    try:
+        import uvicorn
+
+        from .webapp.main import create_app
+    except ImportError as e:
+        _err(f"Web UI dependencies not installed: {e}")
+        _hint("Install with: uv pip install -e .")
+        raise typer.Exit(code=1)
+
+    app_instance = create_app(paths)
+
+    url = f"http://{host}:{port}"
+    console.print()
+    console.print(
+        Panel.fit(
+            f"[bold]LLM-Wiki[/bold] web UI starting…\n\n"
+            f"  URL: [bold cyan]{url}[/bold cyan]\n"
+            f"  Project: [dim]{paths.root}[/dim]\n\n"
+            f"[dim]Press Ctrl+C to stop.[/dim]",
+            title="🚀 Serve",
+            border_style="cyan",
+        )
+    )
+
+    # Open browser shortly after the server starts
+    if not no_browser:
+        import threading
+        import time
+        import webbrowser
+
+        def _open_browser() -> None:
+            time.sleep(1.2)  # let uvicorn finish binding
+            try:
+                webbrowser.open(url)
+            except Exception:
+                pass
+
+        threading.Thread(target=_open_browser, daemon=True).start()
+
+    # Run uvicorn. We pass the app instance directly (not a string) so the
+    # paths injection survives. Reload mode requires a string import path,
+    # so it's not supported here — that's fine, the wiki is small and a
+    # restart is instant.
+    if reload:
+        _hint("--reload not supported with paths injection; ignoring.")
+
+    try:
+        uvicorn.run(
+            app_instance,
+            host=host,
+            port=port,
+            log_level="warning",  # quiet — we don't need every request logged
+            access_log=False,
+        )
+    except KeyboardInterrupt:
+        console.print("\n[dim]Stopped.[/dim]")
+
+
 def main() -> None:
     """Entry point used by the `wiki` console script."""
     app()

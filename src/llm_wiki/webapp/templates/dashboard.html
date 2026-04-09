@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard — LLM-Wiki{% endblock %}
+
+{% block content %}
+
+<!-- Page header -->
+<div class="mb-8 flex items-start justify-between">
+    <div>
+        <h1 class="text-3xl font-semibold text-white mb-1">Dashboard</h1>
+        <p class="text-sm text-[#9ca3af] font-mono truncate max-w-2xl">{{ project_root }}</p>
+    </div>
+    {% if stats.last_updated %}
+    <div class="text-right">
+        <div class="text-xs text-[#6b7280] uppercase tracking-wide">Last updated</div>
+        <div class="text-sm text-[#9ca3af] mt-1">{{ stats.last_updated }}</div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Top stats cards -->
+<div class="grid grid-cols-4 gap-4 mb-8">
+    <div class="bg-[#1c1f2a] border border-[#2a2e3a] rounded-lg p-5">
+        <div class="text-xs text-[#6b7280] uppercase tracking-wide mb-2">Raw Sources</div>
+        <div class="text-3xl font-semibold text-white">{{ stats.raw_files }}</div>
+        <div class="text-xs text-[#6b7280] mt-2">{{ stats.db.sources_ingested }} ingested</div>
+    </div>
+
+    <div class="bg-[#1c1f2a] border border-[#2a2e3a] rounded-lg p-5">
+        <div class="text-xs text-[#6b7280] uppercase tracking-wide mb-2">Wiki Pages</div>
+        <div class="text-3xl font-semibold text-white">{{ stats.pages.total }}</div>
+        <div class="text-xs text-[#6b7280] mt-2">across 4 categories</div>
+    </div>
+
+    <div class="bg-[#1c1f2a] border border-[#2a2e3a] rounded-lg p-5">
+        <div class="text-xs text-[#6b7280] uppercase tracking-wide mb-2">Ingest Runs</div>
+        <div class="text-3xl font-semibold text-white">{{ stats.db.ingest_runs }}</div>
+        <div class="text-xs text-[#6b7280] mt-2">historical</div>
+    </div>
+
+    <div class="bg-[#1c1f2a] border border-[#2a2e3a] rounded-lg p-5">
+        <div class="text-xs text-[#6b7280] uppercase tracking-wide mb-2">Health</div>
+        {% if stats.health.score is not none %}
+            {% if stats.health.score >= 80 %}
+                <div class="text-3xl font-semibold text-green-400">{{ stats.health.score }}</div>
+            {% elif stats.health.score >= 50 %}
+                <div class="text-3xl font-semibold text-yellow-400">{{ stats.health.score }}</div>
+            {% else %}
+                <div class="text-3xl font-semibold text-red-400">{{ stats.health.score }}</div>
+            {% endif %}
+            <div class="text-xs text-[#6b7280] mt-2">
+                {% if stats.health.errors > 0 %}<span class="text-red-400">{{ stats.health.errors }} errors</span>{% endif %}
+                {% if stats.health.errors > 0 and stats.health.warnings > 0 %} · {% endif %}
+                {% if stats.health.warnings > 0 %}<span class="text-yellow-400">{{ stats.health.warnings }} warnings</span>{% endif %}
+                {% if stats.health.errors == 0 and stats.health.warnings == 0 %}clean ✓{% endif %}
+            </div>
+        {% else %}
+            <div class="text-3xl font-semibold text-[#6b7280]">—</div>
+            <div class="text-xs text-[#6b7280] mt-2">unknown</div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Page category breakdown -->
+<div class="mb-8">
+    <h2 class="text-sm font-semibold text-[#9ca3af] uppercase tracking-wide mb-3">Wiki pages by category</h2>
+    <div class="bg-[#1c1f2a] border border-[#2a2e3a] rounded-lg overflow-hidden">
+        <div class="grid grid-cols-4 divide-x divide-[#2a2e3a]">
+            <div class="p-4">
+                <div class="flex items-center gap-2 mb-1">
+                    <div class="w-2 h-2 rounded-full bg-[#8b5cf6]"></div>
+                    <div class="text-xs text-[#9ca3af] uppercase tracking-wide">Sources</div>
+                </div>
+                <div class="text-2xl font-semibold text-white mt-2">{{ stats.pages.sources }}</div>
+            </div>
+            <div class="p-4">
+                <div class="flex items-center gap-2 mb-1">
+                    <div class="w-2 h-2 rounded-full bg-[#f59e0b]"></div>
+                    <div class="text-xs text-[#9ca3af] uppercase tracking-wide">Entities</div>
+                </div>
+                <div class="text-2xl font-semibold text-white mt-2">{{ stats.pages.entities }}</div>
+            </div>
+            <div class="p-4">
+                <div class="flex items-center gap-2 mb-1">
+                    <div class="w-2 h-2 rounded-full bg-[#10b981]"></div>
+                    <div class="text-xs text-[#9ca3af] uppercase tracking-wide">Concepts</div>
+                </div>
+                <div class="text-2xl font-semibold text-white mt-2">{{ stats.pages.concepts }}</div>
+            </div>
+            <div class="p-4">
+                <div class="flex items-center gap-2 mb-1">
+                    <div class="w-2 h-2 rounded-full bg-[#ec4899]"></div>
+                    <div class="text-xs text-[#9ca3af] uppercase tracking-wide">Synthesis</div>
+                </div>
+                <div class="text-2xl font-semibold text-white mt-2">{{ stats.pages.synthesis }}</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Two-column: recent activity + backend status -->
+<div class="grid grid-cols-3 gap-6">
+    <!-- Recent activity -->
+    <div class="col-span-2">
+        <h2 class="text-sm font-semibold text-[#9ca3af] uppercase tracking-wide mb-3">Recent activity</h2>
+        <div class="bg-[#1c1f2a] border border-[#2a2e3a] rounded-lg">
+            {% if stats.recent_activity %}
+                <div class="divide-y divide-[#2a2e3a]">
+                    {% for entry in stats.recent_activity %}
+                    <div class="p-4">
+                        <div class="flex items-start justify-between mb-2">
+                            <div class="flex items-center gap-2">
+                                {% if entry.action == 'ingest' %}
+                                    <span class="text-xs px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 font-medium">ingest</span>
+                                {% elif entry.action == 'query' %}
+                                    <span class="text-xs px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 font-medium">query</span>
+                                {% elif entry.action == 'init' %}
+                                    <span class="text-xs px-2 py-0.5 rounded bg-green-500/20 text-green-300 font-medium">init</span>
+                                {% else %}
+                                    <span class="text-xs px-2 py-0.5 rounded bg-gray-500/20 text-gray-300 font-medium">{{ entry.action }}</span>
+                                {% endif %}
+                                <span class="text-sm text-white font-medium">{{ entry.title }}</span>
+                            </div>
+                            <span class="text-xs text-[#6b7280]">{{ entry.date }}</span>
+                        </div>
+                        {% if entry.bullets %}
+                        <ul class="text-xs text-[#9ca3af] space-y-1 ml-2">
+                            {% for bullet in entry.bullets[:4] %}
+                                <li>• {{ bullet }}</li>
+                            {% endfor %}
+                            {% if entry.bullets|length > 4 %}
+                                <li class="text-[#6b7280]">… and {{ entry.bullets|length - 4 }} more</li>
+                            {% endif %}
+                        </ul>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <div class="p-8 text-center text-[#6b7280]">
+                    <div class="text-sm mb-2">No activity yet</div>
+                    <div class="text-xs">Add sources with <code class="bg-[#0f1117] px-1.5 py-0.5 rounded text-[#9aa7ff]">wiki add</code> then <code class="bg-[#0f1117] px-1.5 py-0.5 rounded text-[#9aa7ff]">wiki ingest</code></div>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Backend status + quick actions -->
+    <div class="col-span-1 space-y-4">
+        <!-- Backend status -->
+        <div>
+            <h2 class="text-sm font-semibold text-[#9ca3af] uppercase tracking-wide mb-3">Backend</h2>
+            <div class="bg-[#1c1f2a] border border-[#2a2e3a] rounded-lg p-4 space-y-3">
+                <div class="flex items-center justify-between">
+                    <span class="text-sm text-[#9ca3af]">Search</span>
+                    {% if stats.qmd.available %}
+                        <span class="text-xs text-green-400 flex items-center gap-1">
+                            <span class="w-1.5 h-1.5 rounded-full bg-green-400"></span>
+                            {{ stats.qmd.version or 'ready' }}
+                        </span>
+                    {% else %}
+                        <span class="text-xs text-red-400 flex items-center gap-1">
+                            <span class="w-1.5 h-1.5 rounded-full bg-red-400"></span>
+                            not installed
+                        </span>
+                    {% endif %}
+                </div>
+                <div class="flex items-center justify-between">
+                    <span class="text-sm text-[#9ca3af]">Tracked sources</span>
+                    <span class="text-sm text-white font-mono">{{ stats.db.sources_total }}</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Quick links -->
+        <div>
+            <h2 class="text-sm font-semibold text-[#9ca3af] uppercase tracking-wide mb-3">Quick actions</h2>
+            <div class="bg-[#1c1f2a] border border-[#2a2e3a] rounded-lg p-2">
+                <a href="/sources" class="block px-3 py-2 text-sm text-[#9ca3af] hover:bg-[#0f1117] hover:text-white rounded transition">
+                    📥 Browse sources
+                </a>
+                <a href="/query" class="block px-3 py-2 text-sm text-[#9ca3af] hover:bg-[#0f1117] hover:text-white rounded transition">
+                    💬 Ask a question
+                </a>
+                <a href="/lint" class="block px-3 py-2 text-sm text-[#9ca3af] hover:bg-[#0f1117] hover:text-white rounded transition">
+                    🔍 Run lint
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}

@@ -1,0 +1,39 @@
+/* LLM-Wiki — minimal CSS overrides on top of Tailwind */
+
+/* Custom scrollbar that fits the dark theme */
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+::-webkit-scrollbar-track {
+    background: #0f1117;
+}
+::-webkit-scrollbar-thumb {
+    background: #2a2e3a;
+    border-radius: 5px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #3a3e4a;
+}
+
+/* Better default focus rings on dark backgrounds */
+*:focus-visible {
+    outline: 2px solid #7c8cff;
+    outline-offset: 2px;
+}
+
+/* Smooth transitions for HTMX swaps */
+.htmx-swapping {
+    opacity: 0;
+    transition: opacity 150ms;
+}
+.htmx-settling {
+    opacity: 1;
+    transition: opacity 150ms;
+}
+
+/* Code-block-like inline elements get a subtle background */
+code {
+    font-family: 'SF Mono', Menlo, Monaco, Consolas, monospace;
+    font-size: 0.875em;
+}
