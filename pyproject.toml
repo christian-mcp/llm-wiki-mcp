@@ -1,0 +1,37 @@
+[project]
+name = "llm-wiki"
+version = "0.5.0"
+description = "An LLM-maintained personal wiki, per Karpathy's pattern. Local-first, enterprise-grade."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    { name = "LLM-Wiki" }
+]
+license = { text = "MIT" }
+dependencies = [
+    # Stage 1
+    "typer>=0.12.0",
+    "rich>=13.7.0",
+    "pyyaml>=6.0.1",
+    # Stage 2 — parsers
+    "pypdf>=4.0.0",
+    "python-docx>=1.1.0",
+    "beautifulsoup4>=4.12.0",
+    "lxml>=5.0.0",
+    # Stage 3 — LLM ingest
+    "httpx>=0.27.0",
+    "pydantic>=2.6.0",
+]
+
+[project.scripts]
+wiki = "llm_wiki.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/llm_wiki"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/llm_wiki/templates" = "llm_wiki/templates"

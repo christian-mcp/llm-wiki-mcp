@@ -1,0 +1,32 @@
+# Internal state (regenerable)
+.wiki/state.sqlite
+.wiki/state.sqlite-*
+.wiki/cache/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Obsidian workspace state (keep config, ignore per-user workspace)
+wiki/.obsidian/workspace.json
+wiki/.obsidian/workspace-mobile.json
+
+# Runtime content — not shipped with the code
+raw/
+wiki/
+.wiki/
