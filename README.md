@@ -41,10 +41,23 @@ Every ingest produces a cluster of `sources/`, `entities/`, and `concepts/` page
 - **Structured extraction** — Qwen3 identifies entities (people, orgs, models), concepts, and key takeaways per source
 - **Smart merging** — re-ingesting related sources updates existing entity/concept pages instead of overwriting them, preserving provenance
 - **Hybrid search** — BM25 full-text + vector embeddings + LLM reranking (all local, via [QMD](https://github.com/tobi/qmd))
+- **3-way query scope** — `Wiki` (thematic answers from LLM-compiled pages), `Raw` (exact lookups in original documents), or `Hybrid` (both)
+- **Intent classification** — casual messages ("hi", "thanks") skip retrieval and get a quick reply, saving ~30 seconds per chitchat turn
 - **Cited synthesis** — queries return markdown answers with `[[wikilinks]]` pointing to the pages that support each claim
 - **Write-back** — save good answers as new `synthesis/` pages with `--save-as`, so your explorations compound in the knowledge base
 - **Wiki linting** — automated health checks for broken links, orphans, malformed frontmatter, noise in sources, and (with `--deep`) LLM-powered contradiction detection between pages
 - **Auto-fix** — most stylistic issues resolve with one command
+- **Auto-reindex** — search index refreshes automatically after ingest and lint; new pages are queryable immediately
+
+### Web UI
+A full web interface at `http://127.0.0.1:8000` after `wiki serve`:
+- **Dashboard** — project stats and recent activity
+- **Sources** — list, inspect, delete, or re-ingest sources with one click
+- **Ingest** — drag-and-drop upload, live progress log, persistent jobs that **survive tab close and server restart**
+- **Jobs** — history of all ingest runs with live progress bars and error details
+- **Query** — chat-style interface with streaming synthesis, scope toggle, save-as-synthesis button
+- **Lint** — interactive lint report with one-click auto-fix
+- **Graph** — D3 force-directed visualization of the full wiki, color-coded by page type
 
 ### Supported input formats
 `.pdf` · `.md` · `.html` · `.docx` · `.txt`
@@ -127,7 +140,7 @@ Tested on macOS (Apple Silicon, M3 Pro 18GB). Should work on Linux; Windows unte
 
 ```bash
 # Clone
-git clone https://github.com/NiharShrotri/llm-wiki.git
+git clone https://github.com/YOUR-USERNAME/llm-wiki.git
 cd llm-wiki
 
 # Create a virtual environment (uv is faster than pip, either works)
@@ -186,12 +199,13 @@ open wiki/   # then "Open folder as vault"
 | `wiki sources show <id>` | Show metadata + text preview for one source |
 | `wiki sources rm <id>` | Remove a source from tracking |
 | `wiki ingest [source_id]` | Run the 3-pass LLM ingest pipeline |
-| `wiki query "<question>" [--save-as <slug>]` | Search + synthesize a cited answer |
+| `wiki query "<question>" [--scope wiki\|raw\|hybrid] [--save-as <slug>]` | Search + synthesize a cited answer |
 | `wiki reindex` | Force rebuild of the QMD search index |
-| `wiki lint [--deep] [--fix] [--save]` | Health-check the wiki |
+| `wiki lint [--deep] [--fix]` | Health-check the wiki |
 | `wiki status` | Show project stats, paths, config, backend health |
+| `wiki serve [--port N]` | Launch the web UI at `http://127.0.0.1:8000` |
 
-Run `wiki <command> --help` for full options on any command.
+Run `wiki <command> --help` for full options on any command. See [USAGE.md](./USAGE.md) for a full walkthrough.
 
 ## Example output
 
@@ -308,6 +322,8 @@ Every claim is cited. Every citation points to a page that actually exists.
 
 ## Project status
 
+**Current version: v0.8.1** — production-ready for personal use.
+
 | Stage | Scope | Status |
 |---|---|---|
 | 1 | Scaffolding, CLI, Obsidian vault config | ✅ Done |
@@ -315,10 +331,15 @@ Every claim is cited. Every citation points to a page that actually exists.
 | 3 | LLM ingest pipeline (3 passes, streaming, merge-path) | ✅ Done |
 | 4 | QMD search + `wiki query` with citation + save-back | ✅ Done |
 | 5 | Lint checks + auto-fix + deep contradiction detection | ✅ Done |
-| 6 | FastAPI + HTMX web UI | ⏳ In progress |
+| 6 | FastAPI + HTMX web UI (7 pages: Dashboard, Sources, Ingest, Jobs, Query, Lint, Graph) | ✅ Done |
+| 7 (v0.7.0) | Source CRUD, intent classification, 3-way scope toggle | ✅ Done |
+| 8 (v0.8.0) | Persistent ingest jobs (survive tab close, server restart) | ✅ Done |
+| 8.1 | Auto-reindex after ingest and lint | ✅ Done |
 
-### Planned for Phase 2 (post-v1)
+### Possible future work
 - Hugging Face Spaces deployment (smaller model, API-compatible)
+- Dashboard showing live active-job count
+- Static HTML export for sharing the wiki
 - Multi-user / team features
 - Mobile-friendly web UI
 - Fine-tuned query expansion model
