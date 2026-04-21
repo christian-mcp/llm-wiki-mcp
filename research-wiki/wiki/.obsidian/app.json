@@ -1,0 +1,15 @@
+{
+  "alwaysUpdateLinks": true,
+  "newLinkFormat": "shortest",
+  "useMarkdownLinks": false,
+  "showLineNumber": true,
+  "strictLineBreaks": false,
+  "showFrontmatter": true,
+  "foldHeading": true,
+  "foldIndent": true,
+  "showUnsupportedFiles": false,
+  "attachmentFolderPath": "attachments",
+  "userIgnoreFilters": [
+    ".wiki/"
+  ]
+}

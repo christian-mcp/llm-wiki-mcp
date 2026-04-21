@@ -1,0 +1,80 @@
+MCP RESEARCH TEAM — PAPER ASSIGNMENT PROFILES
+================================================
+
+Purpose: Routing guide for daily research-paper triage. Match incoming papers
+to the teammate whose focus areas, methods, and current workload fit best.
+
+
+--------------------------------------------------------------------
+HÉCTOR GÓMEZ — Risk & Derivatives Lead
+--------------------------------------------------------------------
+Keywords: risk management, term structure, implied volatility, IV surfaces,
+macro, FX, commodity pricing models, factor uncertainty, mean reversion,
+geopolitical risk, options market information content, long/short signals.
+
+Role notes:
+- Acts as the natural "curator" in the pipeline — first filter for new reads.
+- Default owner for anything touching derivatives pricing, vol surfaces, factor investing,
+  risk models, backtesting, commodities, order routing / trading, FX hedging or macro/FX crossovers into commodities.
+
+--------------------------------------------------------------------
+JP SADA — Infrastructure & Data Engineering Lead
+--------------------------------------------------------------------
+Keywords: infrastructure, data pipelines, MLOps, AWS/S3, Airflow, Snowflake,
+ETL, data engineering, pipeline, LLM temporal leakage,
+lookahead bias, point-in-time data, alternative data plumbing.
+
+Role notes:
+- Owns production systems end-to-end.
+- Fewer reading assignments, but the routing target for infra-adjacent
+  research — MLOps, data leakage, backtest integrity, alt-data ingestion.
+
+
+--------------------------------------------------------------------
+CHRISTIAN MARIN — Agentic AI & Local LLM Deployment
+--------------------------------------------------------------------
+Keywords: agentic AI, local LLMs, Qwen3, multi-agent systems, LLM pipeline
+orchestration, Clawdbot, reinforcement learning, on-prem inference,
+LLM tooling, agent frameworks.
+
+Recent assignments: Beyond Prompting, DatedGPT, DeltaHedge, OPHR, MILLION.
+
+Role notes:
+- Strong fit for LLM deployment research and multi-agent RL.
+- Partner with Carlos on agentic AI topics; Christian leans infra/deploy,
+  Carlos leans signal/finance.
+
+
+--------------------------------------------------------------------
+CARLOS — LLMs for Investing & Quant Research
+--------------------------------------------------------------------
+Keywords: LLMs for investing, agentic systems for finance, anomalies,
+factor research, meta-models, signal blending, ensemble methods,
+Lopez de Prado, cross-sectional signals, research methodology.
+
+Role notes:
+- Overlaps with Christian on agentic AI — route finance-heavy agent/LLM
+  papers to Carlos, infra/deployment-heavy ones to Christian.
+
+--------------------------------------------------------------------
+RAFAEL GALLEGOS — Weather × Commodities (PhD)
+--------------------------------------------------------------------
+Keywords: weather and commodities, crop yield ML, spatial-temporal
+forecasting, satellite / remote sensing, agricultural data, climate signals,
+Berkeley weather pipeline.
+
+Role notes:
+- PhD-level with research background.
+- Already embedded in the weather research.
+- Start all assignments in weather / agri / satellite space and expand
+  outward from there as scope develops.
+
+
+--------------------------------------------------------------------
+QUICK ROUTING CHEAT-SHEET
+--------------------------------------------------------------------
+- Derivatives, vol, term structure, macro/FX, risk ............ Héctor
+- Infra, MLOps, data leakage, alt-data plumbing ............... JP
+- Agentic AI / LLM deployment / local inference ............... Christian
+- LLMs-for-investing, anomalies, factor/meta-models ........... Carlos
+- Weather, crop yields, satellite, spatial-temporal ML ........ Rafael

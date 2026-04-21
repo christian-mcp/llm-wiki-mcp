@@ -2,6 +2,34 @@
 
 > A local, LLM-maintained personal knowledge base. Drop documents in, watch an LLM compile them into a living, interlinked Obsidian wiki you can search and query.
 
+## Run the frontend
+
+This repo now ships with a sample pipeline output in `pipeline_output/` and a ready-to-browse example wiki in `research-wiki/`.
+
+```bash
+cd llm-wiki-mcp
+source .venv/bin/activate
+
+# Terminal 1: keep the bundled example wiki synced to the bundled pipeline output
+cd research-wiki
+./watch-team-profiles.sh
+
+# Terminal 2: launch the web UI
+cd research-wiki
+../.venv/bin/wiki serve
+```
+
+Then open `http://127.0.0.1:8000`.
+
+If you only want to browse the bundled example without running the watcher:
+
+```bash
+cd llm-wiki-mcp
+source .venv/bin/activate
+cd research-wiki
+../.venv/bin/wiki serve
+```
+
 Feel free to fork and don't forget to give it a Star ⭐️ for better reach!
 
 -------------------------
@@ -154,8 +182,8 @@ Tested on macOS (Apple Silicon, M3 Pro 18GB). Should work on Linux; Windows unte
 
 ```bash
 # Clone
-git clone https://github.com/YOUR-USERNAME/llm-wiki.git
-cd llm-wiki
+git clone https://github.com/christian-mcp/llm-wiki-mcp.git
+cd llm-wiki-mcp
 
 # Create a virtual environment (uv is faster than pip, either works)
 uv venv

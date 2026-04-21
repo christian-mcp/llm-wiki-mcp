@@ -1,7 +1,7 @@
 # Internal state (regenerable)
-.wiki/state.sqlite
-.wiki/state.sqlite-*
-.wiki/cache/
+/.wiki/state.sqlite
+/.wiki/state.sqlite-*
+/.wiki/cache/
 
 # Python
 __pycache__/
@@ -27,6 +27,12 @@ wiki/.obsidian/workspace.json
 wiki/.obsidian/workspace-mobile.json
 
 # Runtime content — not shipped with the code
-raw/
-wiki/
-.wiki/
+/raw/
+/wiki/
+/.wiki/
+
+# Bundled example project: keep the shareable wiki snapshot, ignore local runtime state
+/research-wiki/.wiki/*
+!/research-wiki/.wiki/config.yml
+/research-wiki/wiki/.obsidian/workspace.json
+/research-wiki/wiki/.obsidian/workspace-mobile.json

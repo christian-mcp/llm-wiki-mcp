@@ -1,0 +1,14 @@
+version: 1
+llm:
+  provider: ollama
+  model: qwen3:14b
+  host: http://localhost:11434
+  temperature: 0.3
+  thinking: true
+search:
+  backend: qmd
+  rerank: true
+ingest:
+  interactive: true
+  auto_update_index: true
+  auto_update_log: true
