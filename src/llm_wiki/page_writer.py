@@ -204,12 +204,9 @@ def _list_pages_in(directory: Path) -> list[tuple[str, str]]:
 
 def rebuild_index(paths: cfg.WikiPaths, today: str) -> None:
     """Rebuild wiki/index.md from the current wiki/ contents."""
-    sources = _list_pages_in(paths.wiki / "sources")
-    entities = _list_pages_in(paths.wiki / "entities")
-    concepts = _list_pages_in(paths.wiki / "concepts")
-    synthesis = _list_pages_in(paths.wiki / "synthesis")
-
     lines = [INDEX_HEADER.format(today=today)]
+
+    page_counts: dict[str, int] = {}
 
     def _section(title: str, pages: list[tuple[str, str]], subdir: str) -> None:
         lines.append(f"## {title}\n")
@@ -221,16 +218,17 @@ def rebuild_index(paths: cfg.WikiPaths, today: str) -> None:
             lines.append("")
         lines.append("")
 
-    _section("Sources", sources, "sources")
-    _section("Entities", entities, "entities")
-    _section("Concepts", concepts, "concepts")
-    _section("Synthesis", synthesis, "synthesis")
+    for subdir, title in cfg.WIKI_PAGE_KINDS:
+        pages = _list_pages_in(paths.wiki / subdir)
+        page_counts[subdir] = len(pages)
+        _section(title, pages, subdir)
 
     lines.append("---\n")
-    lines.append(
-        f"**Stats:** {len(sources)} sources · {len(entities)} entities · "
-        f"{len(concepts)} concepts · {len(synthesis)} synthesis pages\n"
-    )
+    stats_parts = [
+        f"{page_counts.get(subdir, 0)} {title.lower()}"
+        for subdir, title in cfg.WIKI_PAGE_KINDS
+    ]
+    lines.append(f"**Stats:** {' · '.join(stats_parts)}\n")
 
     paths.index.write_text("\n".join(lines), encoding="utf-8")
 

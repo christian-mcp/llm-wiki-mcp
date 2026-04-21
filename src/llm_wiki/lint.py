@@ -42,6 +42,7 @@ class CheckId(str, Enum):
     STALE_SOURCE_REF = "stale_source_ref"
     NOISE_IN_SYNTHESIS = "noise_in_synthesis"
     CONTRADICTION = "contradiction"
+    QUALITY_REVIEW = "quality_review"
 
 
 @dataclass
@@ -120,7 +121,7 @@ class PageInventory:
 _NOISE_PAGES = {"index.md", "log.md"}
 
 # Directory prefix → page type
-_PAGE_TYPES = ("sources", "entities", "concepts", "synthesis")
+_PAGE_TYPES = cfg.WIKI_SUBDIRS
 
 
 def _build_inventory(paths: cfg.WikiPaths) -> PageInventory:
@@ -330,10 +331,12 @@ def check_frontmatter(inv: PageInventory) -> list[LintIssue]:
     """Verify every page has required frontmatter fields."""
     issues: list[LintIssue] = []
     required_by_type = {
-        "entities": {"title", "type", "created", "updated"},
-        "concepts": {"title", "type", "created", "updated"},
-        "sources": {"title", "type", "created"},
-        "synthesis": {"title", "type", "created"},
+        "entities": {"title", "type", "created", "updated", "sources", "confidence"},
+        "concepts": {"title", "type", "created", "updated", "sources", "confidence"},
+        "facts": {"title", "type", "created", "updated", "sources", "confidence"},
+        "hypotheses": {"title", "type", "created", "updated", "sources", "confidence"},
+        "sources": {"title", "type", "created", "updated", "file_path", "file_type"},
+        "synthesis": {"title", "type", "created", "updated", "confidence"},
     }
 
     for relpath, parsed in inv.pages.items():
@@ -576,7 +579,7 @@ def check_contradictions_deep(
     page_link_sets: dict[str, set[str]] = {}
     for relpath, targets in inv.outgoing_links.items():
         page_type = relpath.split("/", 1)[0] if "/" in relpath else ""
-        if page_type in ("entities", "concepts"):
+        if page_type in ("entities", "concepts", "facts", "hypotheses", "synthesis"):
             page_link_sets[relpath] = set(t for t in targets if t)
 
     pairs: list[tuple[str, str, int]] = []
@@ -638,6 +641,136 @@ def _trim_for_prompt(text: str, max_chars: int = 3000) -> str:
     if len(text) <= max_chars:
         return text
     return text[:max_chars] + "\n[... truncated ...]"
+
+
+def _extract_json_object(text: str) -> str:
+    """Extract the first top-level JSON object from a model response."""
+    text = text.strip()
+    if text.startswith("```"):
+        lines = text.split("\n", 1)
+        if len(lines) == 2:
+            text = lines[1]
+        if text.rstrip().endswith("```"):
+            text = text.rsplit("```", 1)[0]
+
+    start = text.find("{")
+    if start == -1:
+        return text
+
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start, len(text)):
+        c = text[i]
+        if escape:
+            escape = False
+            continue
+        if c == "\\":
+            escape = True
+            continue
+        if c == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    return text[start:]
+
+
+def check_quality_review_deep(
+    inv: PageInventory,
+    client,  # OllamaClient
+    max_pages: int = 12,
+) -> list[LintIssue]:
+    """Run a skeptical review pass over high-value pages.
+
+    Prioritizes pages where overclaiming is most costly: hypotheses, facts,
+    synthesis, then concepts/entities.
+    """
+    from .llm import ChatMessage, LLMError
+    from .prompts import QUALITY_REVIEW_PROMPT
+    import json
+
+    issues: list[LintIssue] = []
+
+    priority_order = {
+        "hypotheses": 0,
+        "facts": 1,
+        "synthesis": 2,
+        "concepts": 3,
+        "entities": 4,
+        "sources": 5,
+    }
+    candidate_paths = sorted(
+        inv.pages.keys(),
+        key=lambda relpath: (
+            priority_order.get(relpath.split("/", 1)[0], 99),
+            relpath,
+        ),
+    )[:max_pages]
+
+    severity_map = {
+        "warning": Severity.WARNING,
+        "info": Severity.INFO,
+    }
+
+    for relpath in candidate_paths:
+        page = inv.pages[relpath]
+        prompt = QUALITY_REVIEW_PROMPT.format(
+            path=relpath,
+            content=_trim_for_prompt(page.to_markdown()),
+        )
+        messages = [
+            ChatMessage(
+                role="system",
+                content="You are a skeptical research auditor focused on evidence quality.",
+            ),
+            ChatMessage(role="user", content=prompt),
+        ]
+
+        try:
+            response = client.chat(messages, thinking=False, temperature=0.2)
+        except LLMError:
+            continue
+
+        try:
+            payload = json.loads(_extract_json_object(response))
+        except json.JSONDecodeError:
+            continue
+
+        items = payload.get("issues", [])
+        if not isinstance(items, list):
+            continue
+
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            message = str(item.get("message", "")).strip()
+            if not message:
+                continue
+            severity = severity_map.get(
+                str(item.get("severity", "warning")).strip().lower(),
+                Severity.WARNING,
+            )
+            suggestion = str(item.get("suggestion", "")).strip()
+            issues.append(
+                LintIssue(
+                    check=CheckId.QUALITY_REVIEW,
+                    severity=severity,
+                    page=relpath,
+                    message=message,
+                    suggestion=suggestion,
+                    fixable=False,
+                    context={"kind": str(item.get("kind", "")).strip()},
+                )
+            )
+
+    return issues
 
 
 # ---------------------------------------------------------------------------
@@ -772,6 +905,8 @@ def run_lint(
     *,
     deep: bool = False,
     client=None,  # OllamaClient, required if deep=True
+    max_pairs: int = 10,
+    max_quality_pages: int = 12,
 ) -> LintReport:
     """Run all fast checks, plus deep checks if requested.
 
@@ -802,7 +937,12 @@ def run_lint(
     # Deep check (LLM-powered)
     if deep and client is not None:
         report.deep_check_run = True
-        report.issues.extend(check_contradictions_deep(inv, paths, client))
+        report.issues.extend(
+            check_contradictions_deep(inv, paths, client, max_pairs=max_pairs)
+        )
+        report.issues.extend(
+            check_quality_review_deep(inv, client, max_pages=max_quality_pages)
+        )
 
     # Sort: errors first, then warnings, then infos. Within each, by page.
     severity_order = {

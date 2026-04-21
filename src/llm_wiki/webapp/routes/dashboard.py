@@ -76,11 +76,28 @@ def _parse_log_entries(log_path: Path, limit: int = 15) -> list[dict]:
 def _collect_stats(paths: cfg.WikiPaths) -> dict:
     """Gather everything the dashboard displays in a single dict."""
     # Page counts by type
-    sources_pages = _count_md(paths.wiki / "sources")
-    entities_pages = _count_md(paths.wiki / "entities")
-    concepts_pages = _count_md(paths.wiki / "concepts")
-    synthesis_pages = _count_md(paths.wiki / "synthesis")
-    total_pages = sources_pages + entities_pages + concepts_pages + synthesis_pages
+    page_counts = {
+        subdir: _count_md(paths.wiki / subdir)
+        for subdir in cfg.WIKI_SUBDIRS
+    }
+    total_pages = sum(page_counts.values())
+    page_colors = {
+        "sources": "#8b5cf6",
+        "entities": "#f59e0b",
+        "concepts": "#10b981",
+        "facts": "#3b82f6",
+        "hypotheses": "#ef4444",
+        "synthesis": "#ec4899",
+    }
+    page_cards = [
+        {
+            "key": subdir,
+            "label": cfg.WIKI_SUBDIR_LABELS[subdir],
+            "count": page_counts[subdir],
+            "color": page_colors.get(subdir, "#9ca3af"),
+        }
+        for subdir in cfg.WIKI_SUBDIRS
+    ]
 
     # Raw files
     raw_files = 0
@@ -116,7 +133,7 @@ def _collect_stats(paths: cfg.WikiPaths) -> dict:
     last_updated: str | None = None
     try:
         latest = 0.0
-        for sub in ("sources", "entities", "concepts", "synthesis"):
+        for sub in cfg.WIKI_SUBDIRS:
             d = paths.wiki / sub
             if not d.exists():
                 continue
@@ -131,12 +148,11 @@ def _collect_stats(paths: cfg.WikiPaths) -> dict:
 
     return {
         "pages": {
-            "sources": sources_pages,
-            "entities": entities_pages,
-            "concepts": concepts_pages,
-            "synthesis": synthesis_pages,
+            **page_counts,
             "total": total_pages,
+            "categories": len(page_counts),
         },
+        "page_cards": page_cards,
         "raw_files": raw_files,
         "db": db_stats,
         "qmd": {"available": qmd_available, "version": qmd_version},

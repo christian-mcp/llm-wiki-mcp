@@ -28,6 +28,9 @@ Runs 100% locally on Apple Silicon or anywhere Ollama works. No API keys, no clo
 # Drop files in (PDFs, markdown, HTML, DOCX, text)
 wiki add ~/Documents/papers --recursive
 
+# Or extract article links from a text file, fetch them into raw/, then ingest
+wiki fetch-links ~/Documents/paper-links.txt --ingest
+
 # Watch Qwen3 read them and build an interlinked wiki
 wiki ingest
 
@@ -41,13 +44,15 @@ wiki lint --fix
 open wiki/
 ```
 
-Every ingest produces a cluster of `sources/`, `entities/`, and `concepts/` pages with YAML frontmatter and `[[wikilinks]]` between them. Every query pulls the top-ranked pages via hybrid BM25 + vector + LLM-rerank search, then synthesizes a cited answer. Every lint run catches broken links, orphan pages, malformed frontmatter, and (optionally, using the LLM) contradictions between pages.
+Every ingest produces a cluster of `sources/`, `entities/`, `concepts/`, `facts/`, and `hypotheses/` pages with YAML frontmatter and `[[wikilinks]]` between them. Every query pulls the top-ranked pages via hybrid BM25 + vector + LLM-rerank search, then synthesizes a cited answer. Every lint run catches broken links, orphan pages, malformed frontmatter, and (optionally, using the LLM) contradictions, weak evidence, and over-generalized claims.
 
 ## Features
 
 ### Core capabilities
 - **Incremental ingest** — drop a file, run `wiki ingest`, get 8–15 cross-linked wiki pages
-- **Structured extraction** — Qwen3 identifies entities (people, orgs, models), concepts, and key takeaways per source
+- **Structured extraction** — Qwen3 identifies entities, concepts, facts, hypotheses, and key takeaways per source
+- **Research-aware source pages** — every source page separates raw resource links, summaries, extracted facts, hypotheses, and quality watchouts
+- **Skeptic pass** — deep lint acts as a dedicated reviewer for contradictions, weak provenance, and hypotheses stated too confidently
 - **Smart merging** — re-ingesting related sources updates existing entity/concept pages instead of overwriting them, preserving provenance
 - **Hybrid search** — BM25 full-text + vector embeddings + LLM reranking (all local, via [QMD](https://github.com/tobi/qmd))
 - **3-way query scope** — `Wiki` (thematic answers from LLM-compiled pages), `Raw` (exact lookups in original documents), or `Hybrid` (both)
@@ -97,7 +102,7 @@ Three layers, per Karpathy:
 ```
 
 - **`raw/`** — your source documents. Immutable. The agent reads but never modifies.
-- **`wiki/`** — LLM-maintained markdown. One folder per page type (`sources/`, `entities/`, `concepts/`, `synthesis/`) plus auto-generated `index.md` and `log.md`. Open this in Obsidian.
+- **`wiki/`** — LLM-maintained markdown. One folder per page type (`sources/`, `entities/`, `concepts/`, `facts/`, `hypotheses/`, `synthesis/`) plus auto-generated `index.md` and `log.md`. Open this in Obsidian.
 - **`schema/AGENTS.md`** — the conventions file. Tells the LLM how to format pages, when to merge vs create, how to cite, how to handle contradictions. Edit as your preferences evolve.
 - **`.wiki/`** — internal state: SQLite ingest history, QMD search index, config. Git-ignored.
 
@@ -107,7 +112,7 @@ Each source goes through three LLM passes:
 
 1. **Extraction** (thinking mode on) — Qwen3 reads the source and returns structured JSON: summary, key takeaways, named entities, concepts, tags.
 2. **Page drafting** (streaming, thinking mode off) — one call per entity/concept. Draft a new page from scratch, or *merge* new information into an existing page (preserving prior content, updating dates, appending to `sources:` frontmatter).
-3. **Source summary** — write the `sources/<slug>.md` page listing every wiki page touched by this source for provenance.
+3. **Source summary** — write the `sources/<slug>.md` page with raw resource metadata, summary, extracted facts, hypotheses, quality watchouts, and related pages.
 
 After the three passes: `index.md` is rebuilt, `log.md` is appended, and QMD's search index is updated automatically.
 
@@ -204,6 +209,7 @@ open wiki/   # then "Open folder as vault"
 |---|---|
 | `wiki init [path]` | Scaffold a new wiki project |
 | `wiki add <file-or-folder> [-r]` | Copy sources into `raw/` and register for ingest |
+| `wiki fetch-links <file-or-folder> [-r] [--ingest]` | Extract URLs from local files, fetch them into `raw/fetched-links/`, and optionally ingest them |
 | `wiki sources list` | List all tracked sources with status |
 | `wiki sources show <id>` | Show metadata + text preview for one source |
 | `wiki sources rm <id>` | Remove a source from tracking |

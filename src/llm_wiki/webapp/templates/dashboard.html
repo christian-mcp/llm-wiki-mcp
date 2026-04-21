@@ -29,7 +29,7 @@
     <div class="bg-[#1c1f2a] border border-[#2a2e3a] rounded-lg p-5">
         <div class="text-xs text-[#6b7280] uppercase tracking-wide mb-2">Wiki Pages</div>
         <div class="text-3xl font-semibold text-white">{{ stats.pages.total }}</div>
-        <div class="text-xs text-[#6b7280] mt-2">across 4 categories</div>
+        <div class="text-xs text-[#6b7280] mt-2">across {{ stats.pages.categories }} categories</div>
     </div>
 
     <div class="bg-[#1c1f2a] border border-[#2a2e3a] rounded-lg p-5">
@@ -64,37 +64,16 @@
 <!-- Page category breakdown -->
 <div class="mb-8">
     <h2 class="text-sm font-semibold text-[#9ca3af] uppercase tracking-wide mb-3">Wiki pages by category</h2>
-    <div class="bg-[#1c1f2a] border border-[#2a2e3a] rounded-lg overflow-hidden">
-        <div class="grid grid-cols-4 divide-x divide-[#2a2e3a]">
-            <div class="p-4">
-                <div class="flex items-center gap-2 mb-1">
-                    <div class="w-2 h-2 rounded-full bg-[#8b5cf6]"></div>
-                    <div class="text-xs text-[#9ca3af] uppercase tracking-wide">Sources</div>
-                </div>
-                <div class="text-2xl font-semibold text-white mt-2">{{ stats.pages.sources }}</div>
+    <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
+        {% for card in stats.page_cards %}
+        <div class="bg-[#1c1f2a] border border-[#2a2e3a] rounded-lg p-4">
+            <div class="flex items-center gap-2 mb-1">
+                <div class="w-2 h-2 rounded-full" style="background-color: {{ card.color }}"></div>
+                <div class="text-xs text-[#9ca3af] uppercase tracking-wide">{{ card.label }}</div>
             </div>
-            <div class="p-4">
-                <div class="flex items-center gap-2 mb-1">
-                    <div class="w-2 h-2 rounded-full bg-[#f59e0b]"></div>
-                    <div class="text-xs text-[#9ca3af] uppercase tracking-wide">Entities</div>
-                </div>
-                <div class="text-2xl font-semibold text-white mt-2">{{ stats.pages.entities }}</div>
-            </div>
-            <div class="p-4">
-                <div class="flex items-center gap-2 mb-1">
-                    <div class="w-2 h-2 rounded-full bg-[#10b981]"></div>
-                    <div class="text-xs text-[#9ca3af] uppercase tracking-wide">Concepts</div>
-                </div>
-                <div class="text-2xl font-semibold text-white mt-2">{{ stats.pages.concepts }}</div>
-            </div>
-            <div class="p-4">
-                <div class="flex items-center gap-2 mb-1">
-                    <div class="w-2 h-2 rounded-full bg-[#ec4899]"></div>
-                    <div class="text-xs text-[#9ca3af] uppercase tracking-wide">Synthesis</div>
-                </div>
-                <div class="text-2xl font-semibold text-white mt-2">{{ stats.pages.synthesis }}</div>
-            </div>
+            <div class="text-2xl font-semibold text-white mt-2">{{ card.count }}</div>
         </div>
+        {% endfor %}
     </div>
 </div>
 

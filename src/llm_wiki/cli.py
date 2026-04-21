@@ -16,6 +16,7 @@ Later stages add: ingest, query, lint, serve.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -29,7 +30,9 @@ from . import config as cfg
 from . import db
 from . import ingest_llm
 from . import ingest_raw
+from . import link_fetch
 from . import lint as lint_module
+from . import page_writer
 from . import query as query_module
 from . import scaffold
 from . import search
@@ -188,10 +191,10 @@ def status() -> None:
             return 0
         return sum(1 for p in folder.glob("*.md") if not p.name.startswith("."))
 
-    sources_pages = _count_md(paths.wiki / "sources")
-    entities_pages = _count_md(paths.wiki / "entities")
-    concepts_pages = _count_md(paths.wiki / "concepts")
-    synthesis_pages = _count_md(paths.wiki / "synthesis")
+    page_counts = {
+        subdir: _count_md(paths.wiki / subdir)
+        for subdir in cfg.WIKI_SUBDIRS
+    }
 
     raw_files = (
         sum(1 for p in paths.raw.rglob("*") if p.is_file() and not p.name.startswith("."))
@@ -219,13 +222,11 @@ def status() -> None:
     pages_table = Table(title="Wiki pages", show_header=False, box=None, padding=(0, 2))
     pages_table.add_column(style="dim", width=22)
     pages_table.add_column()
-    pages_table.add_row("sources/", str(sources_pages))
-    pages_table.add_row("entities/", str(entities_pages))
-    pages_table.add_row("concepts/", str(concepts_pages))
-    pages_table.add_row("synthesis/", str(synthesis_pages))
+    for subdir, title in cfg.WIKI_PAGE_KINDS:
+        pages_table.add_row(f"{subdir}/", str(page_counts[subdir]))
     pages_table.add_row(
         "[bold]total[/bold]",
-        f"[bold]{sources_pages + entities_pages + concepts_pages + synthesis_pages}[/bold]",
+        f"[bold]{sum(page_counts.values())}[/bold]",
     )
     console.print(pages_table)
 
@@ -361,6 +362,180 @@ def add(
 
     if added:
         _hint("See everything with [bold]wiki sources list[/bold]")
+
+
+@app.command("fetch-links")
+def fetch_links_cmd(
+    path: Path = typer.Argument(
+        ...,
+        help="A file or folder containing article links to fetch into raw/.",
+    ),
+    recursive: bool = typer.Option(
+        False,
+        "--recursive",
+        "-r",
+        help="When PATH is a folder, scan for links recursively.",
+    ),
+    ingest: bool = typer.Option(
+        False,
+        "--ingest",
+        help="Immediately ingest fetched/updated documents after downloading them.",
+    ),
+    no_thinking: bool = typer.Option(
+        False,
+        "--no-thinking",
+        help="Disable Qwen3 thinking mode in the extraction pass when --ingest is used.",
+    ),
+) -> None:
+    """Extract URLs from a file, fetch them, and save them as local docs.
+
+    HTML/text links are converted into markdown docs under raw/fetched-links/.
+    PDF links are downloaded as PDFs. All fetched files are registered as wiki
+    sources so you can ingest them immediately or later.
+    """
+    paths = _resolve_root_or_die()
+    source = path.expanduser().resolve()
+
+    if not source.exists():
+        _err(f"Not found: {source}")
+        raise typer.Exit(code=1)
+
+    urls = link_fetch.extract_urls_from_path(source, recursive=recursive)
+    if not urls:
+        _warn("No URLs found.")
+        _hint("Point this at a .txt/.md file or folder that contains article links.")
+        raise typer.Exit(code=1)
+
+    console.print()
+    console.print(
+        f"Fetching [bold]{len(urls)}[/bold] link(s) into [dim]{paths.raw / 'fetched-links'}[/dim]"
+    )
+    console.print()
+
+    fetched = updated = unchanged = errored = 0
+    source_ids_to_ingest: list[int] = []
+    seen_ids: set[int] = set()
+
+    for url in urls:
+        outcome = link_fetch.fetch_url_to_raw(paths, url)
+        short_url = url if len(url) <= 90 else url[:87] + "..."
+
+        if outcome.result == "added":
+            fetched += 1
+            console.print(
+                f"  [green]+[/green] [cyan]{short_url}[/cyan]\n"
+                f"      [dim]{outcome.relpath}[/dim]"
+            )
+        elif outcome.result == "updated":
+            updated += 1
+            console.print(
+                f"  [yellow]↺[/yellow] [cyan]{short_url}[/cyan]\n"
+                f"      [dim]{outcome.relpath}[/dim]"
+            )
+        elif outcome.result == "pending":
+            updated += 1
+            console.print(
+                f"  [yellow]•[/yellow] [cyan]{short_url}[/cyan]\n"
+                f"      [dim]{outcome.relpath} already tracked and pending ingest[/dim]"
+            )
+        elif outcome.result == "unchanged":
+            unchanged += 1
+            console.print(
+                f"  [dim]=[/dim] [dim]{short_url}[/dim]\n"
+                f"      [dim]{outcome.relpath} unchanged[/dim]"
+            )
+        else:
+            errored += 1
+            console.print(
+                f"  [red]✗[/red] [dim]{short_url}[/dim]\n"
+                f"      [red]{outcome.message}[/red]"
+            )
+
+        if outcome.source_id is not None and outcome.result in {"added", "updated", "pending"}:
+            if outcome.source_id not in seen_ids:
+                seen_ids.add(outcome.source_id)
+                source_ids_to_ingest.append(outcome.source_id)
+
+    console.print()
+    parts = []
+    if fetched:
+        parts.append(f"[green]{fetched} added[/green]")
+    if updated:
+        parts.append(f"[yellow]{updated} updated/pending[/yellow]")
+    if unchanged:
+        parts.append(f"[dim]{unchanged} unchanged[/dim]")
+    if errored:
+        parts.append(f"[red]{errored} errors[/red]")
+    console.print("  " + " · ".join(parts))
+    console.print()
+
+    if not ingest:
+        if source_ids_to_ingest:
+            _hint("Run [bold]wiki ingest --batch[/bold] to process the fetched docs into wiki pages.")
+        return
+
+    if not source_ids_to_ingest:
+        _warn("Nothing new to ingest.")
+        return
+
+    config = cfg.load_config(paths)
+    llm_cfg = config.get("llm", {})
+    host = llm_cfg.get("host", "http://localhost:11434")
+    model = llm_cfg.get("model", "qwen3:14b")
+
+    console.print(f"[dim]Checking Ollama at {host} …[/dim]")
+    client = OllamaClient(host=host, model=model)
+    try:
+        client.ensure_ready()
+    except OllamaNotRunning as e:
+        client.close()
+        _err(str(e))
+        raise typer.Exit(code=1)
+    except ModelNotFound as e:
+        client.close()
+        _err(str(e))
+        raise typer.Exit(code=1)
+    except LLMError as e:
+        client.close()
+        _err(f"LLM check failed: {e}")
+        raise typer.Exit(code=1)
+
+    _ok(f"Ollama ready · model=[bold]{model}[/bold]")
+
+    try:
+        results = []
+        for source_id in source_ids_to_ingest:
+            cb = CliIngestCallbacks(mode="batch")
+            result = ingest_llm.ingest_source(
+                paths,
+                source_id,
+                client,
+                cb,
+                mode="batch",
+                thinking_for_extraction=not no_thinking,
+            )
+            results.append(result)
+    finally:
+        client.close()
+
+    ok_count = sum(1 for r in results if r.ok)
+    total_created = sum(r.pages_created for r in results)
+    total_updated = sum(r.pages_updated for r in results)
+    console.print()
+    console.rule("[bold]Fetch + ingest summary[/bold]")
+    console.print(
+        f"  [green]{ok_count} ingested[/green] · "
+        f"[dim]{total_created} pages created, {total_updated} updated[/dim]"
+    )
+
+    if ok_count > 0 and search.is_available():
+        console.print()
+        console.print("[dim]Updating search index…[/dim]")
+        try:
+            search.update_index(paths, embed=True)
+            _ok("Search index updated")
+        except search.SearchBackendError as e:
+            _warn(f"Search index update failed: {e}")
 
 
 @sources_app.command("list")
@@ -542,7 +717,9 @@ class CliIngestCallbacks(ingest_llm.IngestCallbacks):
         console.print("[dim]  parsing…[/dim]")
 
     def on_extracting(self) -> None:
-        console.print("[dim]  extracting entities and concepts (thinking mode)…[/dim]")
+        console.print(
+            "[dim]  extracting entities, concepts, facts, and hypotheses (thinking mode)…[/dim]"
+        )
 
     def on_extracted(self, extraction: ingest_llm.Extraction) -> None:
         console.print()
@@ -575,6 +752,30 @@ class CliIngestCallbacks(ingest_llm.IngestCallbacks):
                 )
             console.print()
 
+        if extraction.facts:
+            console.print(f"[bold]Facts[/bold] ({len(extraction.facts)}):")
+            for fact in extraction.facts:
+                console.print(
+                    f"  [green]+[/green] [cyan]{fact.slug}[/cyan] "
+                    f"[dim]({fact.confidence})[/dim]  {fact.name}"
+                )
+            console.print()
+
+        if extraction.hypotheses:
+            console.print(f"[bold]Hypotheses[/bold] ({len(extraction.hypotheses)}):")
+            for hypothesis in extraction.hypotheses:
+                console.print(
+                    f"  [green]+[/green] [cyan]{hypothesis.slug}[/cyan] "
+                    f"[dim]({hypothesis.confidence})[/dim]  {hypothesis.name}"
+                )
+            console.print()
+
+        if extraction.quality_watchouts:
+            console.print("[bold]Quality watchouts:[/bold]")
+            for item in extraction.quality_watchouts:
+                console.print(f"  [yellow]![/yellow] {item}")
+            console.print()
+
         if extraction.tags:
             console.print(f"[bold]Tags:[/bold] [dim]{', '.join(extraction.tags)}[/dim]")
             console.print()
@@ -585,7 +786,13 @@ class CliIngestCallbacks(ingest_llm.IngestCallbacks):
     def ask_confirm(self, extraction: ingest_llm.Extraction) -> bool:
         if self.mode == "batch":
             return True
-        total_pages = len(extraction.entities) + len(extraction.concepts) + 1
+        total_pages = (
+            len(extraction.entities)
+            + len(extraction.concepts)
+            + len(extraction.facts)
+            + len(extraction.hypotheses)
+            + 1
+        )
         return typer.confirm(
             f"File these? Will create/update ~{total_pages} wiki pages.",
             default=True,
@@ -654,11 +861,11 @@ def ingest(
         help="Disable Qwen3 thinking mode in Pass 1 (faster, slightly lower quality).",
     ),
 ) -> None:
-    """Ingest pending sources: extract entities/concepts, write wiki pages.
+    """Ingest pending sources: extract research structure, write wiki pages.
 
     The pipeline runs three LLM passes per source:
       1. Extraction (thinking mode) — structured JSON
-      2. Page drafting — one page per entity/concept with streaming output
+      2. Page drafting — entities, concepts, facts, and hypotheses
       3. Source summary page
 
     Then rebuilds index.md and appends to log.md.
@@ -677,12 +884,15 @@ def ingest(
     try:
         client.ensure_ready()
     except OllamaNotRunning as e:
+        client.close()
         _err(str(e))
         raise typer.Exit(code=1)
     except ModelNotFound as e:
+        client.close()
         _err(str(e))
         raise typer.Exit(code=1)
     except LLMError as e:
+        client.close()
         _err(f"LLM check failed: {e}")
         raise typer.Exit(code=1)
 
@@ -765,6 +975,284 @@ def ingest(
         _hint("Open the vault in Obsidian and check the graph view!")
         _hint("Run [bold]wiki status[/bold] to see updated page counts.")
         _hint("Ask a question with [bold]wiki query \"<your question>\"[/bold]")
+
+
+@app.command()
+def recompile(
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Skip the confirmation prompt.",
+    ),
+    reset_synthesis: bool = typer.Option(
+        False,
+        "--reset-synthesis",
+        help="Also delete wiki/synthesis/*.md before recompiling.",
+    ),
+    no_discover: bool = typer.Option(
+        False,
+        "--no-discover",
+        help="Don't auto-scan raw/ for untracked files before recompiling.",
+    ),
+    no_thinking: bool = typer.Option(
+        False,
+        "--no-thinking",
+        help="Disable Qwen3 thinking mode in the extraction pass.",
+    ),
+) -> None:
+    """Rebuild the compiled wiki from raw sources.
+
+    This resets derived wiki pages and source ingest state, then re-runs the
+    full ingest pipeline from the immutable raw/ layer.
+    """
+    paths = _resolve_root_or_die()
+
+    reset_subdirs = [subdir for subdir in cfg.WIKI_SUBDIRS if subdir != "synthesis"]
+    if reset_synthesis:
+        reset_subdirs.append("synthesis")
+
+    if not yes:
+        subdirs_text = ", ".join(reset_subdirs)
+        confirm = typer.confirm(
+            f"Recompile from raw? This will delete derived pages in: {subdirs_text}.",
+            default=False,
+        )
+        if not confirm:
+            console.print("[dim]Cancelled.[/dim]")
+            raise typer.Exit(code=0)
+
+    config = cfg.load_config(paths)
+    llm_cfg = config.get("llm", {})
+    host = llm_cfg.get("host", "http://localhost:11434")
+    model = llm_cfg.get("model", "qwen3:14b")
+
+    console.print()
+    console.print(f"[dim]Checking Ollama at {host} …[/dim]")
+    client = OllamaClient(host=host, model=model)
+    try:
+        client.ensure_ready()
+    except OllamaNotRunning as e:
+        _err(str(e))
+        raise typer.Exit(code=1)
+    except ModelNotFound as e:
+        _err(str(e))
+        raise typer.Exit(code=1)
+    except LLMError as e:
+        _err(f"LLM check failed: {e}")
+        raise typer.Exit(code=1)
+
+    _ok(f"Ollama ready · model=[bold]{model}[/bold]")
+
+    removed_pages = 0
+    for subdir in reset_subdirs:
+        folder = paths.wiki / subdir
+        if not folder.exists():
+            continue
+        for md_path in folder.glob("*.md"):
+            if md_path.name.startswith("."):
+                continue
+            try:
+                md_path.unlink()
+                removed_pages += 1
+            except OSError as e:
+                client.close()
+                _err(f"Failed to remove {md_path}: {e}")
+                raise typer.Exit(code=1)
+
+    db.reset_sources_for_recompile(paths.state_db)
+    page_writer.rebuild_index(paths, page_writer.today_iso())
+
+    console.print()
+    _ok(f"Reset derived wiki state ({removed_pages} page(s) removed)")
+
+    try:
+        results = ingest_llm.ingest_pending(
+            paths,
+            client,
+            lambda: CliIngestCallbacks(mode="batch"),
+            mode="batch",
+            auto_discover=not no_discover,
+            thinking_for_extraction=not no_thinking,
+        )
+    finally:
+        client.close()
+
+    console.print()
+    console.rule("[bold]Recompile summary[/bold]")
+    ok_count = sum(1 for r in results if r.ok)
+    error_count = sum(1 for r in results if r.error)
+    total_created = sum(r.pages_created for r in results)
+    total_updated = sum(r.pages_updated for r in results)
+    console.print(
+        "  "
+        + " · ".join(
+            part
+            for part in [
+                f"[green]{ok_count} ingested[/green]" if ok_count else "",
+                f"[red]{error_count} errors[/red]" if error_count else "",
+            ]
+            if part
+        )
+    )
+    console.print(
+        f"  [dim]total pages: {total_created} created, {total_updated} updated[/dim]"
+    )
+
+    page_writer.append_log_entry(
+        paths,
+        page_writer.today_iso(),
+        "recompile",
+        "Rebuilt from raw sources",
+        [
+            f"reset subdirs: {', '.join(reset_subdirs)}",
+            f"sources reprocessed: {ok_count}",
+        ],
+    )
+
+    if ok_count > 0 and search.is_available():
+        console.print()
+        console.print("[dim]Updating search index…[/dim]")
+        try:
+            search.update_index(paths, embed=True)
+            _ok("Search index updated")
+        except search.SearchBackendError as e:
+            _warn(f"Search index update failed: {e}")
+
+
+@app.command()
+def watch(
+    path: Path = typer.Argument(
+        ...,
+        help="A file or folder to watch. New or changed supported files are auto-ingested.",
+    ),
+    recursive: bool = typer.Option(
+        False,
+        "--recursive",
+        "-r",
+        help="When PATH is a folder, watch supported files recursively.",
+    ),
+    interval: float = typer.Option(
+        5.0,
+        "--interval",
+        help="Polling interval in seconds.",
+    ),
+    no_thinking: bool = typer.Option(
+        False,
+        "--no-thinking",
+        help="Disable Qwen3 thinking mode in the extraction pass.",
+    ),
+) -> None:
+    """Watch a text file or folder and auto-process changes into the wiki."""
+    paths = _resolve_root_or_die()
+    target = path.expanduser().resolve()
+
+    if not target.exists():
+        _err(f"Not found: {target}")
+        raise typer.Exit(code=1)
+
+    initial_files = list(ingest_raw.iter_addable_files(target, recursive=recursive))
+    if target.is_file() and not initial_files:
+        _err(f"Unsupported file type: {target.suffix or '(no extension)'}")
+        _hint("Supported: .md, .txt, .pdf, .docx, .html, .htm")
+        raise typer.Exit(code=1)
+
+    config = cfg.load_config(paths)
+    llm_cfg = config.get("llm", {})
+    host = llm_cfg.get("host", "http://localhost:11434")
+    model = llm_cfg.get("model", "qwen3:14b")
+
+    console.print()
+    console.print(f"[dim]Checking Ollama at {host} …[/dim]")
+    client = OllamaClient(host=host, model=model)
+    try:
+        client.ensure_ready()
+    except OllamaNotRunning as e:
+        client.close()
+        _err(str(e))
+        raise typer.Exit(code=1)
+    except ModelNotFound as e:
+        client.close()
+        _err(str(e))
+        raise typer.Exit(code=1)
+    except LLMError as e:
+        client.close()
+        _err(f"LLM check failed: {e}")
+        raise typer.Exit(code=1)
+
+    console.print()
+    _ok(f"Watching [bold]{target}[/bold]")
+    _hint("Press Ctrl-C to stop.")
+    if target.is_file():
+        _hint("The watched file will be synced into raw/ and re-ingested whenever its contents change.")
+    else:
+        _hint("New or changed supported files in this folder will be synced into raw/ and ingested automatically.")
+
+    try:
+        while True:
+            files_to_scan = list(ingest_raw.iter_addable_files(target, recursive=recursive))
+            cycle_ok = 0
+
+            for file_path in files_to_scan:
+                outcome = ingest_raw.sync_file(paths, file_path)
+
+                if outcome.result == "unchanged":
+                    continue
+
+                if outcome.result == "skipped_unsupported":
+                    continue
+
+                if outcome.result == "skipped_empty":
+                    _warn(outcome.message)
+                    continue
+
+                if outcome.result == "error":
+                    _warn(outcome.message)
+                    continue
+
+                if outcome.source_id is None:
+                    continue
+
+                if outcome.result == "updated":
+                    action = "updated"
+                elif outcome.result == "pending":
+                    action = "pending"
+                else:
+                    action = "added"
+                console.print()
+                console.rule(
+                    f"[bold cyan]Auto-ingest[/bold cyan]  {action}  {outcome.relpath}"
+                )
+                cb = CliIngestCallbacks(mode="batch")
+                result = ingest_llm.ingest_source(
+                    paths,
+                    outcome.source_id,
+                    client,
+                    cb,
+                    mode="batch",
+                    thinking_for_extraction=not no_thinking,
+                )
+                if result.ok:
+                    cycle_ok += 1
+
+            if cycle_ok > 0:
+                if search.is_available():
+                    console.print()
+                    console.print("[dim]Updating search index…[/dim]")
+                    try:
+                        search.update_index(paths, embed=True)
+                        _ok("Search index updated")
+                    except search.SearchBackendError as e:
+                        _warn(f"Search index update failed: {e}")
+                console.print()
+                _hint("Watcher is idle until the next file change.")
+
+            time.sleep(max(interval, 0.5))
+    except KeyboardInterrupt:
+        console.print()
+        console.print("[dim]Stopped watcher.[/dim]")
+    finally:
+        client.close()
 
 
 # ---------------------------------------------------------------------------
@@ -932,7 +1420,7 @@ def query(
     # Warn if wiki is empty
     wiki_pages = sum(
         1
-        for sub in ("entities", "concepts", "sources", "synthesis")
+        for sub in cfg.WIKI_SUBDIRS
         for _ in (paths.wiki / sub).glob("*.md")
         if (paths.wiki / sub).exists()
     )
@@ -1084,7 +1572,7 @@ def lint(
     deep: bool = typer.Option(
         False,
         "--deep",
-        help="Run LLM-powered contradiction detection (slower, requires Ollama).",
+        help="Run LLM-powered contradiction + evidence quality review (slower, requires Ollama).",
     ),
     fix: bool = typer.Option(
         False,
@@ -1105,7 +1593,7 @@ def lint(
     """Lint the wiki for broken links, orphans, missing pages, and more.
 
     Fast checks (default) run entirely in Python and finish in seconds.
-    Use --deep to also scan page pairs for contradictions using Qwen3.
+    Use --deep to also run a skeptic pass for contradictions and weak evidence.
     """
     paths = _resolve_root_or_die()
 
@@ -1128,11 +1616,16 @@ def lint(
     try:
         console.print()
         if deep:
-            console.print("[dim]Running fast checks + contradiction detection…[/dim]")
+            console.print("[dim]Running fast checks + skeptic review…[/dim]")
         else:
             console.print("[dim]Running fast checks…[/dim]")
 
-        report = lint_module.run_lint(paths, deep=deep, client=client)
+        report = lint_module.run_lint(
+            paths,
+            deep=deep,
+            client=client,
+            max_pairs=max_pairs,
+        )
     finally:
         if client is not None:
             client.close()

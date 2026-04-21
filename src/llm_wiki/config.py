@@ -16,7 +16,17 @@ WIKI_DIR = "wiki"
 SCHEMA_DIR = "schema"
 INTERNAL_DIR = ".wiki"
 
-WIKI_SUBDIRS = ("sources", "entities", "concepts", "synthesis")
+WIKI_PAGE_KINDS = (
+    ("sources", "Sources"),
+    ("entities", "Entities"),
+    ("concepts", "Concepts"),
+    ("facts", "Facts"),
+    ("hypotheses", "Hypotheses"),
+    ("synthesis", "Synthesis"),
+)
+
+WIKI_SUBDIRS = tuple(name for name, _label in WIKI_PAGE_KINDS)
+WIKI_SUBDIR_LABELS = dict(WIKI_PAGE_KINDS)
 
 INDEX_FILE = "index.md"
 LOG_FILE = "log.md"

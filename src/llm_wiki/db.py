@@ -148,3 +148,19 @@ def get_stats(db_path: Path) -> dict:
         "sources_ingested": sources_ingested,
         "ingest_runs": ingest_runs,
     }
+
+
+def reset_sources_for_recompile(db_path: Path) -> None:
+    """Reset derived ingest state so all tracked sources re-run from raw.
+
+    Raw files remain untouched. Historical ingest runs are preserved, but
+    page mappings and in-flight jobs are cleared because they no longer
+    reflect the soon-to-be rebuilt wiki state.
+    """
+    with connect(db_path) as conn:
+        conn.execute("DELETE FROM source_pages")
+        conn.execute("DELETE FROM job_events")
+        conn.execute("DELETE FROM ingest_jobs")
+        conn.execute(
+            "UPDATE sources SET status = 'pending', last_ingested = NULL"
+        )

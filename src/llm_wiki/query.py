@@ -96,7 +96,8 @@ Rules:
 1. Base your answer STRICTLY on the provided wiki pages and excerpts below.
    Do not invent facts or speculate beyond what the sources say.
 2. When referencing a wiki page, use [[wikilinks]] with the same path format
-   shown in the source headers (e.g. [[entities/karpathy]], [[concepts/rag]]).
+   shown in the source headers (e.g. [[entities/karpathy]], [[concepts/rag]],
+   [[facts/attention-is-quadratic]], [[hypotheses/domain-model-edge]]).
 3. If the sources don't contain enough information to answer confidently,
    say so explicitly. Suggest what additional sources would help.
 4. Be concise but substantive. Write in clean markdown (headers, bullets,

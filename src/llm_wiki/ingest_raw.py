@@ -56,6 +56,22 @@ class AddOutcome:
         }
 
 
+@dataclass
+class SyncOutcome:
+    """Result of syncing a watched file into raw/ and tracking state."""
+
+    result: str                 # added | updated | pending | unchanged | skipped_* | error
+    source_path: Path
+    relpath: str
+    title: str | None = None
+    file_type: str | None = None
+    bytes: int = 0
+    word_count: int = 0
+    content_hash: str | None = None
+    source_id: int | None = None
+    message: str = ""
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -227,6 +243,172 @@ def add_file(
         content_hash=parsed.content_hash,
         source_id=source_id,
         message=message,
+    )
+
+
+def sync_file(paths: cfg.WikiPaths, source: Path) -> SyncOutcome:
+    """Sync a watched file into raw/ and update its tracked row if needed.
+
+    Unlike add_file(), this is designed for automation:
+    - uses a stable destination path in raw/ for files outside raw/
+    - detects in-place content changes
+    - marks changed sources pending so they can be re-ingested automatically
+    """
+    source = source.expanduser().resolve()
+
+    if not source.exists() or not source.is_file():
+        return SyncOutcome(
+            result="error",
+            source_path=source,
+            relpath=str(source),
+            message=f"File not found: {source}",
+        )
+
+    if not parsers.is_supported(source):
+        return SyncOutcome(
+            result="skipped_unsupported",
+            source_path=source,
+            relpath=str(source),
+            message=f"Unsupported file type: {source.suffix or '(no extension)'}",
+        )
+
+    if _is_inside_raw(source, paths.raw):
+        final_path = source
+    else:
+        paths.raw.mkdir(parents=True, exist_ok=True)
+        final_path = paths.raw / source.name
+        try:
+            shutil.copy2(source, final_path)
+        except OSError as e:
+            return SyncOutcome(
+                result="error",
+                source_path=source,
+                relpath=str(final_path),
+                message=f"Failed to sync into raw/: {e}",
+            )
+
+    try:
+        parsed = parsers.parse(final_path)
+    except parsers.ParserError as e:
+        return SyncOutcome(
+            result="error",
+            source_path=final_path,
+            relpath=str(final_path),
+            message=f"Parse failed: {e}",
+        )
+
+    try:
+        relpath = str(final_path.relative_to(paths.root))
+    except ValueError:
+        relpath = str(final_path)
+
+    with db.connect(paths.state_db) as conn:
+        existing = conn.execute(
+            "SELECT * FROM sources WHERE relpath = ?",
+            (relpath,),
+        ).fetchone()
+
+        status = "error" if parsed.is_empty else "pending"
+
+        if existing is not None:
+            if existing["content_hash"] == parsed.content_hash:
+                if existing["status"] != "ingested" or not existing["last_ingested"]:
+                    return SyncOutcome(
+                        result="pending",
+                        source_path=final_path,
+                        relpath=relpath,
+                        title=parsed.title,
+                        file_type=parsed.file_type,
+                        bytes=parsed.bytes,
+                        word_count=parsed.word_count,
+                        content_hash=parsed.content_hash,
+                        source_id=existing["id"],
+                        message=f"Tracked source #{existing['id']} still needs ingest: {relpath}",
+                    )
+                return SyncOutcome(
+                    result="unchanged",
+                    source_path=final_path,
+                    relpath=relpath,
+                    title=parsed.title,
+                    file_type=parsed.file_type,
+                    bytes=parsed.bytes,
+                    word_count=parsed.word_count,
+                    content_hash=parsed.content_hash,
+                    source_id=existing["id"],
+                    message=f"No content change for #{existing['id']}: {relpath}",
+                )
+
+            conn.execute(
+                """
+                UPDATE sources
+                SET content_hash = ?, file_type = ?, bytes = ?, status = ?, last_ingested = NULL
+                WHERE id = ?
+                """,
+                (
+                    parsed.content_hash,
+                    parsed.file_type,
+                    parsed.bytes,
+                    status,
+                    existing["id"],
+                ),
+            )
+            return SyncOutcome(
+                result="updated" if not parsed.is_empty else "skipped_empty",
+                source_path=final_path,
+                relpath=relpath,
+                title=parsed.title,
+                file_type=parsed.file_type,
+                bytes=parsed.bytes,
+                word_count=parsed.word_count,
+                content_hash=parsed.content_hash,
+                source_id=existing["id"],
+                message=f"Updated tracked source #{existing['id']}: {relpath}",
+            )
+
+        cur = conn.execute(
+            """
+            INSERT INTO sources (relpath, content_hash, file_type, bytes, added_at, status)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                relpath,
+                parsed.content_hash,
+                parsed.file_type,
+                parsed.bytes,
+                _now_iso(),
+                status,
+            ),
+        )
+        source_id = cur.lastrowid
+
+    if parsed.is_empty:
+        return SyncOutcome(
+            result="skipped_empty",
+            source_path=final_path,
+            relpath=relpath,
+            title=parsed.title,
+            file_type=parsed.file_type,
+            bytes=parsed.bytes,
+            word_count=parsed.word_count,
+            content_hash=parsed.content_hash,
+            source_id=source_id,
+            message=(
+                f"Tracked #{source_id} but extracted only {parsed.word_count} words — "
+                "likely empty or OCR-only."
+            ),
+        )
+
+    return SyncOutcome(
+        result="added",
+        source_path=final_path,
+        relpath=relpath,
+        title=parsed.title,
+        file_type=parsed.file_type,
+        bytes=parsed.bytes,
+        word_count=parsed.word_count,
+        content_hash=parsed.content_hash,
+        source_id=source_id,
+        message=f"Added tracked source #{source_id}: {relpath}",
     )
 
 

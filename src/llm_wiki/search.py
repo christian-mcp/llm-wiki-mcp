@@ -26,7 +26,8 @@ from typing import Iterable
 from . import config as cfg
 
 QMD_TIMEOUT_SHORT = 30.0      # for quick commands (status, collection list)
-QMD_TIMEOUT_MEDIUM = 600.0    # for query (after models are loaded)
+QMD_TIMEOUT_MEDIUM = 600.0    # for general longer-running operations
+QMD_TIMEOUT_QUERY = 60.0      # hybrid query fallback should happen quickly
 QMD_TIMEOUT_LONG = 1800.0     # for update + embed (30 minutes)
 
 
@@ -36,6 +37,10 @@ class SearchBackendError(Exception):
 
 class QmdNotInstalled(SearchBackendError):
     """The `qmd` binary isn't on PATH."""
+
+
+class SearchTimeout(SearchBackendError):
+    """The search backend exceeded its timeout."""
 
 
 @dataclass
@@ -129,7 +134,7 @@ def _run_qmd(
     except FileNotFoundError as e:
         raise QmdNotInstalled(f"qmd binary not runnable: {e}") from e
     except subprocess.TimeoutExpired as e:
-        raise SearchBackendError(
+        raise SearchTimeout(
             f"qmd {' '.join(args)} timed out after {timeout}s"
         ) from e
 
@@ -340,9 +345,27 @@ def query(
     if mode == "hybrid" and not rerank:
         args.append("--no-rerank")
 
-    result = _run_qmd(
-        paths, args, timeout=QMD_TIMEOUT_MEDIUM, check=False
-    )
+    try:
+        result = _run_qmd(
+            paths, args, timeout=QMD_TIMEOUT_QUERY, check=False
+        )
+    except SearchTimeout:
+        if mode == "hybrid":
+            # QMD hybrid mode may invoke local llama.cpp-based query expansion
+            # and hang or become extremely slow on systems where its optional
+            # GPU backend cannot be compiled. Fall back to BM25 so the wiki
+            # remains usable instead of failing the whole query.
+            return query(
+                paths,
+                question,
+                mode="lex",
+                limit=limit,
+                min_score=min_score,
+                collections=collections,
+                hydrate=hydrate,
+                rerank=False,
+            )
+        raise
 
     # QMD may return non-zero on "no results" — inspect before raising
     if result.returncode != 0:

@@ -95,11 +95,7 @@
 
             <!-- Footer -->
             <div class="p-3 border-t border-[#2a2e3a] text-xs text-[#6b7280]">
-                <a href="https://github.com/NiharShrotri/llm-wiki" target="_blank" rel="noopener"
-                   class="block hover:text-[#9aa7ff] transition">
-                    GitHub →
-                </a>
-                <div class="mt-1">Running locally</div>
+                <div>Running locally</div>
             </div>
         </aside>
 

@@ -20,6 +20,14 @@
       "color": { "a": 1, "rgb": 5419488 }
     },
     {
+      "query": "path:facts/",
+      "color": { "a": 1, "rgb": 3906815 }
+    },
+    {
+      "query": "path:hypotheses/",
+      "color": { "a": 1, "rgb": 15684432 }
+    },
+    {
       "query": "path:synthesis/",
       "color": { "a": 1, "rgb": 14701138 }
     }

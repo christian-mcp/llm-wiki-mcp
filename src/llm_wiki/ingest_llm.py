@@ -60,6 +60,20 @@ class ExtractedConcept(BaseModel):
     description: str
 
 
+class ExtractedFact(BaseModel):
+    name: str
+    slug: str
+    description: str
+    confidence: str = "medium"
+
+
+class ExtractedHypothesis(BaseModel):
+    name: str
+    slug: str
+    description: str
+    confidence: str = "low"
+
+
 class Extraction(BaseModel):
     title: str
     source_slug: str
@@ -67,6 +81,9 @@ class Extraction(BaseModel):
     key_takeaways: list[str] = Field(default_factory=list)
     entities: list[ExtractedEntity] = Field(default_factory=list)
     concepts: list[ExtractedConcept] = Field(default_factory=list)
+    facts: list[ExtractedFact] = Field(default_factory=list)
+    hypotheses: list[ExtractedHypothesis] = Field(default_factory=list)
+    quality_watchouts: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
 
 
@@ -79,7 +96,7 @@ class Extraction(BaseModel):
 class PageChange:
     slug: str
     path: str       # relative to wiki root, e.g. 'entities/karpathy.md'
-    kind: str       # 'entity' | 'concept' | 'source'
+    kind: str       # 'entity' | 'concept' | 'fact' | 'hypothesis' | 'source'
     operation: str  # 'created' | 'updated'
 
 
@@ -213,14 +230,16 @@ def _resolve_slug(
     Returns (slug, exists) where `exists` is True if we're updating an
     existing page vs creating a new one.
     """
-    if kind == "entity":
-        search_dirs = [paths.wiki / "entities"]
-    else:
-        search_dirs = [paths.wiki / "concepts"]
+    subdir_map = {
+        "entity": "entities",
+        "concept": "concepts",
+        "fact": "facts",
+        "hypothesis": "hypotheses",
+    }
+    search_dirs = [paths.wiki / subdir_map[kind]]
 
     # Determine entity type for canonical_name (fuzzy match)
     match_kind = "any"
-    # We don't know if it's person/org here without more signal, so use 'any'
 
     existing = slugify.find_existing_slug(name, kind=match_kind, search_dirs=search_dirs)
     if existing:
@@ -468,14 +487,34 @@ def ingest_source(
         slug, exists = _resolve_slug(con.name, "concept", paths, con.slug)
         concept_plans.append((con, slug, exists))
 
+    fact_plans: list[tuple[ExtractedFact, str, bool]] = []
+    for fact in extraction.facts:
+        slug, exists = _resolve_slug(fact.name, "fact", paths, fact.slug)
+        fact_plans.append((fact, slug, exists))
+
+    hypothesis_plans: list[tuple[ExtractedHypothesis, str, bool]] = []
+    for hypothesis in extraction.hypotheses:
+        slug, exists = _resolve_slug(
+            hypothesis.name, "hypothesis", paths, hypothesis.slug
+        )
+        hypothesis_plans.append((hypothesis, slug, exists))
+
     # 6. Staging directory for transactional writes
     staging = Path(tempfile.mkdtemp(prefix="llm-wiki-ingest-"))
     try:
         staged_files: list[tuple[Path, Path, PageChange]] = []  # (staged, final, change)
+        page_subdirs = {
+            "entity": "entities",
+            "concept": "concepts",
+            "fact": "facts",
+            "hypothesis": "hypotheses",
+        }
 
         # 6a. Build the "related" list for each page (used in draft prompts)
         all_entity_slugs = [s for _, s, _ in entity_plans]
         all_concept_slugs = [s for _, s, _ in concept_plans]
+        all_fact_slugs = [s for _, s, _ in fact_plans]
+        all_hypothesis_slugs = [s for _, s, _ in hypothesis_plans]
 
         def _related_for(exclude_slug: str, exclude_kind: str) -> list[str]:
             rel: list[str] = []
@@ -485,187 +524,125 @@ def ingest_source(
             for s in all_concept_slugs:
                 if not (exclude_kind == "concept" and s == exclude_slug):
                     rel.append(f"concepts/{s}")
+            for s in all_fact_slugs:
+                if not (exclude_kind == "fact" and s == exclude_slug):
+                    rel.append(f"facts/{s}")
+            for s in all_hypothesis_slugs:
+                if not (exclude_kind == "hypothesis" and s == exclude_slug):
+                    rel.append(f"hypotheses/{s}")
             return rel
 
         excerpt = _build_excerpt(parsed.text)
-
-        # 6b. Draft/merge each entity page
-        for ent, slug, exists in entity_plans:
+        def _stage_knowledge_page(kind: str, item, slug: str, exists: bool) -> None:
             operation = "updated" if exists else "created"
-            callbacks.on_drafting_page("entity", slug, operation)
+            subdir = page_subdirs[kind]
+            callbacks.on_drafting_page(kind, slug, operation)
 
-            final_path = paths.wiki / "entities" / f"{slug}.md"
-            staged_path = staging / f"entities__{slug}.md"
+            final_path = paths.wiki / subdir / f"{slug}.md"
+            staged_path = staging / f"{subdir}__{slug}.md"
 
-            try:
-                if exists:
-                    existing_page = page_writer.read_page(final_path)
-                    existing_content = (
-                        existing_page.to_markdown() if existing_page else ""
-                    )
-                    messages = prompts.build_merge_page_messages(
-                        name=ent.name,
-                        existing_content=existing_content,
-                        source_title=parsed.title,
-                        source_slug=source_slug,
-                        description=ent.description,
-                        excerpts=excerpt,
-                        today=today,
-                    )
-                else:
-                    messages = prompts.build_draft_page_messages(
-                        kind="entity",
-                        name=ent.name,
-                        source_title=parsed.title,
-                        source_slug=source_slug,
-                        description=ent.description,
-                        excerpts=excerpt,
-                        related=_related_for(slug, "entity"),
-                        today=today,
-                    )
-
-                # Stream the response
-                full = ""
-                gen = client.chat_stream(messages, thinking=False, temperature=0.3)
-                try:
-                    while True:
-                        chunk = next(gen)
-                        callbacks.on_stream_chunk(chunk)
-                        full += chunk
-                except StopIteration as stop:
-                    if stop.value:
-                        full = stop.value
-
-                content = page_writer.strip_llm_noise(full)
-                if not content:
-                    raise LLMError(f"Empty response for entity '{slug}'")
-
-                # Validate frontmatter presence; if missing, wrap it
-                parsed_page = page_writer.parse_page(content)
-                if not parsed_page.frontmatter:
-                    # LLM forgot frontmatter — synthesize minimal one
-                    parsed_page.frontmatter = {
-                        "title": ent.name,
-                        "type": "entity",
-                        "tags": extraction.tags[:3],
-                        "created": today,
-                        "updated": today,
-                        "sources": [f"sources/{source_slug}.md"],
-                        "confidence": "medium",
-                    }
-                    parsed_page.body = content
-                # Always ensure source is in sources list
-                page_writer.add_source_to_frontmatter(parsed_page, source_slug, today)
-                content = parsed_page.to_markdown()
-
-                staged_path.write_text(content, encoding="utf-8")
-                change = PageChange(
-                    slug=slug,
-                    path=f"entities/{slug}.md",
-                    kind="entity",
-                    operation=operation,
-                )
-                staged_files.append((staged_path, final_path, change))
-                callbacks.on_page_written(change)
-
-            except LLMError as e:
-                result = IngestResult(
-                    source_id=source_id,
+            if exists:
+                existing_page = page_writer.read_page(final_path)
+                existing_content = existing_page.to_markdown() if existing_page else ""
+                messages = prompts.build_merge_page_messages(
+                    name=item.name,
+                    existing_content=existing_content,
                     source_title=parsed.title,
                     source_slug=source_slug,
-                    error=f"Failed drafting entity '{slug}': {e}",
+                    description=item.description,
+                    excerpts=excerpt,
+                    today=today,
                 )
-                _mark_source_status(paths, source_id, "error")
-                _record_ingest_run(paths, source_id, started, mode, 0, 0, result.error)
-                callbacks.on_error(result.error)
-                return result
-
-        # 6c. Draft/merge each concept page
-        for con, slug, exists in concept_plans:
-            operation = "updated" if exists else "created"
-            callbacks.on_drafting_page("concept", slug, operation)
-
-            final_path = paths.wiki / "concepts" / f"{slug}.md"
-            staged_path = staging / f"concepts__{slug}.md"
-
-            try:
-                if exists:
-                    existing_page = page_writer.read_page(final_path)
-                    existing_content = (
-                        existing_page.to_markdown() if existing_page else ""
-                    )
-                    messages = prompts.build_merge_page_messages(
-                        name=con.name,
-                        existing_content=existing_content,
-                        source_title=parsed.title,
-                        source_slug=source_slug,
-                        description=con.description,
-                        excerpts=excerpt,
-                        today=today,
-                    )
-                else:
-                    messages = prompts.build_draft_page_messages(
-                        kind="concept",
-                        name=con.name,
-                        source_title=parsed.title,
-                        source_slug=source_slug,
-                        description=con.description,
-                        excerpts=excerpt,
-                        related=_related_for(slug, "concept"),
-                        today=today,
-                    )
-
-                full = ""
-                gen = client.chat_stream(messages, thinking=False, temperature=0.3)
-                try:
-                    while True:
-                        chunk = next(gen)
-                        callbacks.on_stream_chunk(chunk)
-                        full += chunk
-                except StopIteration as stop:
-                    if stop.value:
-                        full = stop.value
-
-                content = page_writer.strip_llm_noise(full)
-                if not content:
-                    raise LLMError(f"Empty response for concept '{slug}'")
-
-                parsed_page = page_writer.parse_page(content)
-                if not parsed_page.frontmatter:
-                    parsed_page.frontmatter = {
-                        "title": con.name,
-                        "type": "concept",
-                        "tags": extraction.tags[:3],
-                        "created": today,
-                        "updated": today,
-                        "sources": [f"sources/{source_slug}.md"],
-                        "confidence": "medium",
-                    }
-                    parsed_page.body = content
-                page_writer.add_source_to_frontmatter(parsed_page, source_slug, today)
-                content = parsed_page.to_markdown()
-
-                staged_path.write_text(content, encoding="utf-8")
-                change = PageChange(
-                    slug=slug,
-                    path=f"concepts/{slug}.md",
-                    kind="concept",
-                    operation=operation,
-                )
-                staged_files.append((staged_path, final_path, change))
-                callbacks.on_page_written(change)
-
-            except LLMError as e:
-                result = IngestResult(
-                    source_id=source_id,
+            else:
+                messages = prompts.build_draft_page_messages(
+                    kind=kind,
+                    name=item.name,
                     source_title=parsed.title,
                     source_slug=source_slug,
-                    error=f"Failed drafting concept '{slug}': {e}",
+                    description=item.description,
+                    excerpts=excerpt,
+                    related=_related_for(slug, kind),
+                    today=today,
+                    confidence=getattr(item, "confidence", "medium"),
                 )
-                _mark_source_status(paths, source_id, "error")
-                _record_ingest_run(paths, source_id, started, mode, 0, 0, result.error)
-                callbacks.on_error(result.error)
-                return result
+
+            full = ""
+            gen = client.chat_stream(messages, thinking=False, temperature=0.3)
+            try:
+                while True:
+                    chunk = next(gen)
+                    callbacks.on_stream_chunk(chunk)
+                    full += chunk
+            except StopIteration as stop:
+                if stop.value:
+                    full = stop.value
+
+            content = page_writer.strip_llm_noise(full)
+            if not content:
+                raise LLMError(f"Empty response for {kind} '{slug}'")
+
+            parsed_page = page_writer.parse_page(content)
+            if not parsed_page.frontmatter:
+                parsed_page.frontmatter = {
+                    "title": item.name,
+                    "type": kind,
+                    "tags": extraction.tags[:3],
+                    "created": today,
+                    "updated": today,
+                    "sources": [f"sources/{source_slug}.md"],
+                    "confidence": getattr(item, "confidence", "medium"),
+                }
+                parsed_page.body = content
+
+            parsed_page = page_writer.ensure_frontmatter_fields(
+                parsed_page,
+                {
+                    "title": item.name,
+                    "type": kind,
+                    "tags": extraction.tags[:3],
+                    "created": today,
+                    "updated": today,
+                    "sources": [f"sources/{source_slug}.md"],
+                    "confidence": getattr(item, "confidence", "medium"),
+                },
+            )
+            page_writer.add_source_to_frontmatter(parsed_page, source_slug, today)
+            content = parsed_page.to_markdown()
+
+            staged_path.write_text(content, encoding="utf-8")
+            change = PageChange(
+                slug=slug,
+                path=f"{subdir}/{slug}.md",
+                kind=kind,
+                operation=operation,
+            )
+            staged_files.append((staged_path, final_path, change))
+            callbacks.on_page_written(change)
+
+        knowledge_groups = [
+            ("entity", entity_plans),
+            ("concept", concept_plans),
+            ("fact", fact_plans),
+            ("hypothesis", hypothesis_plans),
+        ]
+
+        for kind, plans in knowledge_groups:
+            for item, slug, exists in plans:
+                try:
+                    _stage_knowledge_page(kind, item, slug, exists)
+                except LLMError as e:
+                    result = IngestResult(
+                        source_id=source_id,
+                        source_title=parsed.title,
+                        source_slug=source_slug,
+                        error=f"Failed drafting {kind} '{slug}': {e}",
+                    )
+                    _mark_source_status(paths, source_id, "error")
+                    _record_ingest_run(
+                        paths, source_id, started, mode, 0, 0, result.error
+                    )
+                    callbacks.on_error(result.error)
+                    return result
 
         # 6d. Pass 3 — source summary page
         callbacks.on_drafting_page("source", source_slug, "created")
@@ -677,12 +654,24 @@ def ingest_source(
                 source_title=parsed.title,
                 source_slug=source_slug,
                 file_path=source_row["relpath"],
+                raw_relative_link=(Path("..") / ".." / source_row["relpath"]).as_posix(),
                 file_type=parsed.file_type,
                 summary=extraction.summary,
                 key_takeaways=extraction.key_takeaways,
                 tags=extraction.tags,
                 entity_slugs=[s for _, s, _ in entity_plans],
                 concept_slugs=[s for _, s, _ in concept_plans],
+                fact_slugs=[s for _, s, _ in fact_plans],
+                hypothesis_slugs=[s for _, s, _ in hypothesis_plans],
+                facts=[
+                    (slug, fact.name, fact.description)
+                    for fact, slug, _ in fact_plans
+                ],
+                hypotheses=[
+                    (slug, hypothesis.name, hypothesis.description)
+                    for hypothesis, slug, _ in hypothesis_plans
+                ],
+                quality_watchouts=extraction.quality_watchouts,
                 today=today,
             )
 
