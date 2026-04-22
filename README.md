@@ -21,6 +21,44 @@ cd research-wiki
 
 Then open `http://127.0.0.1:8000`.
 
+To open the bundled vault directly in Obsidian:
+
+```bash
+cd llm-wiki-mcp/research-wiki
+../.venv/bin/wiki obsidian
+```
+
+To make the web UI shareable on the same LAN or VPN:
+
+```bash
+cd llm-wiki-mcp/research-wiki
+../.venv/bin/wiki serve --share
+```
+
+`wiki serve --share` prints the URLs you can send to coworkers. It does not add auth, so treat it as an internal-network feature, not a public internet deployment.
+
+## Publish As A Site
+
+This repo also includes a Quartz + GitHub Pages publishing layer in
+`quartz-publish/`.
+
+```bash
+cd llm-wiki-mcp
+./quartz-publish/preview.sh
+```
+
+That builds a Quartz site from `research-wiki/wiki/` and previews it locally at
+`http://localhost:8080`.
+
+For GitHub Pages, push the repo and then:
+
+1. Open `Settings -> Pages`
+2. Set `Source` to `GitHub Actions`
+3. Let `.github/workflows/deploy-quartz-pages.yml` publish the site
+
+The default published URL is the normal project Pages URL for the repo. You can
+override the domain path with the `QUARTZ_BASE_URL` repository variable.
+
 If you only want to browse the bundled example without running the watcher:
 
 ```bash
@@ -228,7 +266,7 @@ wiki query "compare X vs Y" --save-as x-vs-y-comparison
 wiki lint --fix
 
 # 7. Browse the vault in Obsidian
-open wiki/   # then "Open folder as vault"
+wiki obsidian
 ```
 
 ## Commands
@@ -246,7 +284,8 @@ open wiki/   # then "Open folder as vault"
 | `wiki reindex` | Force rebuild of the QMD search index |
 | `wiki lint [--deep] [--fix]` | Health-check the wiki |
 | `wiki status` | Show project stats, paths, config, backend health |
-| `wiki serve [--port N]` | Launch the web UI at `http://127.0.0.1:8000` |
+| `wiki obsidian [page]` | Open the current wiki directly in Obsidian |
+| `wiki serve [--port N] [--share]` | Launch the web UI locally, or print LAN/VPN-friendly URLs with `--share` |
 
 Run `wiki <command> --help` for full options on any command. See [USAGE.md](./USAGE.md) for a full walkthrough.
 

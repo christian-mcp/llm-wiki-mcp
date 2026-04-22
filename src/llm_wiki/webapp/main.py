@@ -15,6 +15,7 @@ from fastapi.templating import Jinja2Templates
 
 from .. import __version__
 from .. import config as cfg
+from .. import integrations
 
 
 def _get_template_dir() -> Path:
@@ -52,6 +53,7 @@ def create_app(paths: cfg.WikiPaths) -> FastAPI:
     # Templates
     template_dir = _get_template_dir()
     templates = Jinja2Templates(directory=str(template_dir))
+    templates.env.globals["obsidian_uri"] = integrations.obsidian_uri_for_path(paths.index)
     app.state.templates = templates
 
     # Static files

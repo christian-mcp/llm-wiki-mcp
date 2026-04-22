@@ -30,6 +30,7 @@ from . import config as cfg
 from . import db
 from . import ingest_llm
 from . import ingest_raw
+from . import integrations
 from . import link_fetch
 from . import lint as lint_module
 from . import page_writer
@@ -115,6 +116,31 @@ def _status_style(status: str) -> str:
     }.get(status, "white")
 
 
+def _resolve_obsidian_target(paths: cfg.WikiPaths, target: str | None) -> Path:
+    """Resolve a user-provided note path into a concrete file under wiki/."""
+    if not target:
+        return paths.index
+
+    raw_target = Path(target).expanduser()
+    candidates: list[Path] = []
+
+    if raw_target.is_absolute():
+        candidates.append(raw_target)
+    else:
+        candidates.append(paths.wiki / raw_target)
+        if raw_target.suffix == "":
+            candidates.append(paths.wiki / f"{target}.md")
+        candidates.append(paths.root / raw_target)
+
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_file():
+            return candidate.resolve()
+
+    _err(f"Wiki page not found: {target}")
+    _hint("Try [bold]wiki obsidian[/bold] to open the vault index, or pass a path like [bold]entities/hector-gomez[/bold].")
+    raise typer.Exit(code=1)
+
+
 # ---------------------------------------------------------------------------
 # Stage 1 commands
 # ---------------------------------------------------------------------------
@@ -171,12 +197,38 @@ def init(
     console.print(table)
     console.print()
 
-    _hint(
-        f"Open the vault in Obsidian: [bold]open {paths.wiki}[/bold]  "
-        f"(then 'Open folder as vault')"
-    )
+    _hint("Open the vault in Obsidian with [bold]wiki obsidian[/bold]")
     _hint("Add your first source with [bold]wiki add <file>[/bold]")
     _hint("Check the status anytime with [bold]wiki status[/bold]")
+
+
+@app.command("obsidian")
+def obsidian_cmd(
+    target: Optional[str] = typer.Argument(
+        None,
+        help="Wiki page to open in Obsidian. Defaults to wiki/index.md.",
+    ),
+) -> None:
+    """Open the current wiki directly in Obsidian."""
+    paths = _resolve_root_or_die()
+    target_path = _resolve_obsidian_target(paths, target)
+    result = integrations.open_in_obsidian(target_path)
+
+    try:
+        display_path = target_path.relative_to(paths.root)
+    except ValueError:
+        display_path = target_path
+
+    if result.launched:
+        _ok(f"Sent [cyan]{display_path}[/cyan] to Obsidian")
+        _hint("If nothing opens, launch Obsidian once and make sure the obsidian:// URI handler is registered on this machine.")
+        return
+
+    _err("Couldn't launch Obsidian from this shell.")
+    if result.detail:
+        _hint(result.detail)
+    _hint(f"Open [bold]{paths.wiki}[/bold] as a vault manually once, then try [bold]wiki obsidian[/bold] again.")
+    raise typer.Exit(code=1)
 
 
 @app.command()
@@ -972,7 +1024,7 @@ def ingest(
             )
 
         console.print()
-        _hint("Open the vault in Obsidian and check the graph view!")
+        _hint("Open the vault in Obsidian with [bold]wiki obsidian[/bold] and check the graph view.")
         _hint("Run [bold]wiki status[/bold] to see updated page counts.")
         _hint("Ask a question with [bold]wiki query \"<your question>\"[/bold]")
 
@@ -1681,6 +1733,11 @@ def serve(
         "--no-browser",
         help="Don't auto-open the browser on startup.",
     ),
+    share: bool = typer.Option(
+        False,
+        "--share",
+        help="Bind to 0.0.0.0 and print LAN-friendly URLs you can share on the same network or VPN.",
+    ),
     reload: bool = typer.Option(
         False,
         "--reload",
@@ -1690,8 +1747,8 @@ def serve(
     """Start the LLM-Wiki web UI on localhost.
 
     The UI provides a dashboard, source browser, ingest interface, query
-    interface, and lint dashboard. It runs locally and binds to 127.0.0.1
-    by default — no external access, no auth required.
+    interface, and lint dashboard. It binds to 127.0.0.1 by default.
+    Use --share to expose it on your LAN/VPN and print shareable URLs.
     """
     paths = _resolve_root_or_die()
 
@@ -1713,18 +1770,41 @@ def serve(
 
     app_instance = create_app(paths)
 
-    url = f"http://{host}:{port}"
+    bind_host = "0.0.0.0" if share else host
+    local_url = f"http://127.0.0.1:{port}"
+    browser_url = local_url if bind_host == "0.0.0.0" else f"http://{bind_host}:{port}"
+    share_urls = integrations.detect_lan_urls(port) if bind_host == "0.0.0.0" else []
+
+    panel_lines = [
+        "[bold]LLM-Wiki[/bold] web UI starting…",
+        "",
+        f"  Local: [bold cyan]{local_url}[/bold cyan]",
+    ]
+    if share_urls:
+        panel_lines.append("  Share:")
+        panel_lines.extend(
+            f"    [bold green]{url}[/bold green]" for url in share_urls
+        )
+    panel_lines.extend(
+        [
+            f"  Project: [dim]{paths.root}[/dim]",
+            "",
+            "[dim]Press Ctrl+C to stop.[/dim]",
+        ]
+    )
+
     console.print()
     console.print(
         Panel.fit(
-            f"[bold]LLM-Wiki[/bold] web UI starting…\n\n"
-            f"  URL: [bold cyan]{url}[/bold cyan]\n"
-            f"  Project: [dim]{paths.root}[/dim]\n\n"
-            f"[dim]Press Ctrl+C to stop.[/dim]",
+            "\n".join(panel_lines),
             title="🚀 Serve",
             border_style="cyan",
         )
     )
+    if share:
+        _warn("Share mode has no built-in auth. Anyone who can reach this machine on your LAN or VPN can read the wiki.")
+        if not share_urls:
+            _hint("Couldn't detect a LAN IP automatically. Share your machine IP manually with the chosen port.")
 
     # Open browser shortly after the server starts
     if not no_browser:
@@ -1735,7 +1815,7 @@ def serve(
         def _open_browser() -> None:
             time.sleep(1.2)  # let uvicorn finish binding
             try:
-                webbrowser.open(url)
+                webbrowser.open(browser_url)
             except Exception:
                 pass
 
@@ -1751,7 +1831,7 @@ def serve(
     try:
         uvicorn.run(
             app_instance,
-            host=host,
+            host=bind_host,
             port=port,
             log_level="warning",  # quiet — we don't need every request logged
             access_log=False,

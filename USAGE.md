@@ -68,7 +68,19 @@ Your browser should open to `http://127.0.0.1:8000` automatically. If not, open 
 
 ### 3. (Optional) Open Obsidian
 
-If you use Obsidian for browsing the wiki visually, open the `wiki/` subfolder as a vault. You'll see the same content the web UI shows, plus Obsidian's graph view, backlinks, and live preview.
+```bash
+wiki obsidian
+```
+
+That opens the current wiki straight into Obsidian using the `obsidian://` URI handler. If nothing happens, open Obsidian once manually so the URI handler gets registered on your machine.
+
+### 4. (Optional) Make the UI shareable on your LAN or VPN
+
+```bash
+wiki serve --share
+```
+
+This binds the server to `0.0.0.0` and prints URLs you can send to coworkers on the same network or VPN. There is no built-in auth, so treat this as an internal-network feature.
 
 ---
 
@@ -230,7 +242,7 @@ Hover over a node to see its connection count. Click to open the page. Use the s
 
 #### 2. Obsidian (recommended for deep reading)
 
-Open the `wiki/` subfolder as a vault. Obsidian gives you:
+Run `wiki obsidian`. Obsidian gives you:
 - Live markdown preview
 - Backlink panel showing which other pages link here
 - Graph view with filters
@@ -368,8 +380,10 @@ wiki reindex                            # Force rebuild of the search index
 
 ```bash
 wiki serve                              # Start on http://127.0.0.1:8000
+wiki serve --share                      # Print LAN/VPN-friendly URLs for coworkers
 wiki serve --port 8080                  # Custom port
 wiki serve --no-browser                 # Don't auto-open browser
+wiki obsidian                           # Open the vault in Obsidian
 ```
 
 ---

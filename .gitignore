@@ -36,3 +36,6 @@ wiki/.obsidian/workspace-mobile.json
 !/research-wiki/.wiki/config.yml
 /research-wiki/wiki/.obsidian/workspace.json
 /research-wiki/wiki/.obsidian/workspace-mobile.json
+
+# Quartz preview/build scratch space
+/.quartz-build/
