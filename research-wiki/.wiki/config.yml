@@ -3,6 +3,7 @@ llm:
   provider: ollama
   model: qwen3:14b
   host: http://localhost:11434
+  timeout: 900.0
   temperature: 0.3
   thinking: true
 search:

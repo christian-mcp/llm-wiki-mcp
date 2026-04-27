@@ -22,10 +22,22 @@ updated: 2026-04-08
 
 *No concept pages yet.*
 
+## Facts
+
+*No fact pages yet.*
+
+## Hypotheses
+
+*No hypothesis pages yet.*
+
 ## Synthesis
 
 *No synthesis pages yet.*
 
+## Team Notes
+
+*No team notes yet. Add human-written markdown files in `wiki/team-notes/`.*
+
 ---
 
-**Stats:** 0 sources · 0 entities · 0 concepts · 0 synthesis pages
+**Stats:** 0 sources · 0 entities · 0 concepts · 0 facts · 0 hypotheses · 0 synthesis · 0 team notes

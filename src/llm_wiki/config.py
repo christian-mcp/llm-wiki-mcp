@@ -25,8 +25,13 @@ WIKI_PAGE_KINDS = (
     ("synthesis", "Synthesis"),
 )
 
+HUMAN_WIKI_PAGE_KINDS = (
+    ("team-notes", "Team Notes"),
+)
+
 WIKI_SUBDIRS = tuple(name for name, _label in WIKI_PAGE_KINDS)
-WIKI_SUBDIR_LABELS = dict(WIKI_PAGE_KINDS)
+HUMAN_WIKI_SUBDIRS = tuple(name for name, _label in HUMAN_WIKI_PAGE_KINDS)
+WIKI_SUBDIR_LABELS = dict(WIKI_PAGE_KINDS + HUMAN_WIKI_PAGE_KINDS)
 
 INDEX_FILE = "index.md"
 LOG_FILE = "log.md"
@@ -83,6 +88,10 @@ class WikiPaths:
     def obsidian(self) -> Path:
         return self.wiki / OBSIDIAN_DIR
 
+    @property
+    def team_notes(self) -> Path:
+        return self.wiki / "team-notes"
+
     def is_initialized(self) -> bool:
         """A folder counts as initialized if its config file exists."""
         return self.config_file.exists()
@@ -98,6 +107,7 @@ DEFAULT_CONFIG: dict = {
         "provider": "ollama",
         "model": "qwen3:14b",
         "host": "http://localhost:11434",
+        "timeout": 900.0,
         "temperature": 0.3,
         # Qwen3 thinking mode — useful for synthesis/lint, slower for routine ops
         "thinking": True,

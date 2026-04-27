@@ -37,6 +37,7 @@ from . import page_writer
 from . import query as query_module
 from . import scaffold
 from . import search
+from . import slack_ingest
 from .llm import (
     LLMError,
     ModelNotFound,
@@ -94,6 +95,15 @@ def _resolve_root_or_die() -> cfg.WikiPaths:
         _hint("Run [bold]wiki init[/bold] in an empty folder to create one.")
         raise typer.Exit(code=1)
     return cfg.WikiPaths(root=root)
+
+
+def _llm_client_from_config(llm_cfg: dict) -> OllamaClient:
+    """Create an Ollama client from config with the repo's timeout override."""
+    return OllamaClient(
+        host=llm_cfg.get("host", "http://localhost:11434"),
+        model=llm_cfg.get("model", "qwen3:14b"),
+        timeout=llm_cfg.get("timeout"),
+    )
 
 
 def _format_bytes(n: int) -> str:
@@ -188,7 +198,8 @@ def init(
     table.add_column(style="dim")
     table.add_column()
     table.add_row("raw/", "Drop your source documents here (PDF, MD, HTML, DOCX, TXT)")
-    table.add_row("wiki/", "LLM-maintained markdown — open this in Obsidian")
+    table.add_row("wiki/", "Markdown vault — generated pages plus human team notes")
+    table.add_row("wiki/team-notes/", "Safe for personal Obsidian edits and Quartz publishing")
     table.add_row("schema/AGENTS.md", "The rules file. Edit it as your conventions evolve.")
     table.add_row(".wiki/", "Internal state (config, SQLite). Git-ignored by default.")
 
@@ -198,6 +209,7 @@ def init(
     console.print()
 
     _hint("Open the vault in Obsidian with [bold]wiki obsidian[/bold]")
+    _hint("Write human notes in [bold]wiki/team-notes/[/bold] so recompiles won't overwrite them")
     _hint("Add your first source with [bold]wiki add <file>[/bold]")
     _hint("Check the status anytime with [bold]wiki status[/bold]")
 
@@ -247,6 +259,12 @@ def status() -> None:
         subdir: _count_md(paths.wiki / subdir)
         for subdir in cfg.WIKI_SUBDIRS
     }
+    page_counts.update(
+        {
+            subdir: _count_md(paths.wiki / subdir)
+            for subdir in cfg.HUMAN_WIKI_SUBDIRS
+        }
+    )
 
     raw_files = (
         sum(1 for p in paths.raw.rglob("*") if p.is_file() and not p.name.startswith("."))
@@ -275,6 +293,8 @@ def status() -> None:
     pages_table.add_column(style="dim", width=22)
     pages_table.add_column()
     for subdir, title in cfg.WIKI_PAGE_KINDS:
+        pages_table.add_row(f"{subdir}/", str(page_counts[subdir]))
+    for subdir, title in cfg.HUMAN_WIKI_PAGE_KINDS:
         pages_table.add_row(f"{subdir}/", str(page_counts[subdir]))
     pages_table.add_row(
         "[bold]total[/bold]",
@@ -536,7 +556,7 @@ def fetch_links_cmd(
     model = llm_cfg.get("model", "qwen3:14b")
 
     console.print(f"[dim]Checking Ollama at {host} …[/dim]")
-    client = OllamaClient(host=host, model=model)
+    client = _llm_client_from_config(llm_cfg)
     try:
         client.ensure_ready()
     except OllamaNotRunning as e:
@@ -575,6 +595,218 @@ def fetch_links_cmd(
     total_updated = sum(r.pages_updated for r in results)
     console.print()
     console.rule("[bold]Fetch + ingest summary[/bold]")
+    console.print(
+        f"  [green]{ok_count} ingested[/green] · "
+        f"[dim]{total_created} pages created, {total_updated} updated[/dim]"
+    )
+
+    if ok_count > 0 and search.is_available():
+        console.print()
+        console.print("[dim]Updating search index…[/dim]")
+        try:
+            search.update_index(paths, embed=True)
+            _ok("Search index updated")
+        except search.SearchBackendError as e:
+            _warn(f"Search index update failed: {e}")
+
+
+@app.command("slack-ingest")
+def slack_ingest_cmd(
+    channels: Optional[list[str]] = typer.Option(
+        None,
+        "--channel",
+        "-c",
+        help="Slack channel name or ID to import. Repeat for multiple channels.",
+    ),
+    days: int = typer.Option(
+        7,
+        "--days",
+        help="Look back this many days from now.",
+    ),
+    token: Optional[str] = typer.Option(
+        None,
+        "--token",
+        envvar="SLACK_BOT_TOKEN",
+        help="Slack bot token. Prefer setting SLACK_BOT_TOKEN instead of passing this.",
+    ),
+    limit: int = typer.Option(
+        200,
+        "--limit",
+        help="Slack page size per API request.",
+    ),
+    no_threads: bool = typer.Option(
+        False,
+        "--no-threads",
+        help="Skip thread replies and only fetch top-level channel messages.",
+    ),
+    ingest: bool = typer.Option(
+        False,
+        "--ingest",
+        help="Immediately ingest fetched/updated Slack digests into wiki pages.",
+    ),
+    no_thinking: bool = typer.Option(
+        False,
+        "--no-thinking",
+        help="Disable Qwen3 thinking mode in the extraction pass when --ingest is used.",
+    ),
+) -> None:
+    """Fetch recent Slack channel history into raw/slack/ as markdown digests."""
+    paths = _resolve_root_or_die()
+    channel_names = channels or list(slack_ingest.DEFAULT_CHANNELS)
+
+    if not token:
+        _err("Missing Slack token.")
+        _hint("Create a Slack app/bot token and export it as [bold]SLACK_BOT_TOKEN[/bold].")
+        raise typer.Exit(code=1)
+    if days < 1:
+        _err("--days must be at least 1.")
+        raise typer.Exit(code=1)
+    if limit < 1:
+        _err("--limit must be at least 1.")
+        raise typer.Exit(code=1)
+
+    console.print()
+    console.print(
+        f"Fetching Slack history for [bold]{len(channel_names)}[/bold] channel(s) "
+        f"over the last [bold]{days}[/bold] day(s)."
+    )
+    _hint("Incoming webhook URLs cannot read Slack history; this command uses SLACK_BOT_TOKEN.")
+    console.print()
+
+    client = slack_ingest.SlackClient(token)
+    try:
+        try:
+            resolved_channels = slack_ingest.resolve_channels(client, channel_names)
+        except slack_ingest.SlackIngestError as e:
+            _err(str(e))
+            _hint("The Slack app needs channels:read, channels:history, and users:read. Add groups:read/groups:history for private channels.")
+            raise typer.Exit(code=1)
+
+        source_ids_to_ingest: list[int] = []
+        seen_ids: set[int] = set()
+        added = updated = unchanged = errored = total_messages = 0
+
+        for channel in resolved_channels:
+            try:
+                outcome = slack_ingest.fetch_channel_to_raw(
+                    paths,
+                    client,
+                    channel,
+                    days=days,
+                    limit=limit,
+                    include_threads=not no_threads,
+                )
+            except slack_ingest.SlackIngestError as e:
+                errored += 1
+                console.print(f"  [red]✗[/red] #{channel.name}: {e}")
+                continue
+            except OSError as e:
+                errored += 1
+                console.print(f"  [red]✗[/red] #{channel.name}: failed to write digest: {e}")
+                continue
+
+            total_messages += outcome.message_count
+            if outcome.result == "added":
+                added += 1
+                console.print(
+                    f"  [green]+[/green] #{outcome.channel} "
+                    f"([bold]{outcome.message_count}[/bold] messages)\n"
+                    f"      [dim]{outcome.relpath}[/dim]"
+                )
+            elif outcome.result == "updated":
+                updated += 1
+                console.print(
+                    f"  [yellow]↺[/yellow] #{outcome.channel} "
+                    f"([bold]{outcome.message_count}[/bold] messages)\n"
+                    f"      [dim]{outcome.relpath}[/dim]"
+                )
+            elif outcome.result == "pending":
+                updated += 1
+                console.print(
+                    f"  [yellow]•[/yellow] #{outcome.channel} "
+                    f"([bold]{outcome.message_count}[/bold] messages)\n"
+                    f"      [dim]{outcome.relpath} already pending[/dim]"
+                )
+            elif outcome.result == "unchanged":
+                unchanged += 1
+                console.print(
+                    f"  [dim]=[/dim] #{outcome.channel} "
+                    f"([bold]{outcome.message_count}[/bold] messages)\n"
+                    f"      [dim]{outcome.relpath} unchanged[/dim]"
+                )
+            else:
+                errored += 1
+                console.print(f"  [red]✗[/red] #{outcome.channel}: {outcome.message}")
+
+            if outcome.source_id is not None and outcome.result in {"added", "updated", "pending"}:
+                if outcome.source_id not in seen_ids:
+                    seen_ids.add(outcome.source_id)
+                    source_ids_to_ingest.append(outcome.source_id)
+    finally:
+        client.close()
+
+    console.print()
+    parts = [
+        f"[bold]{total_messages} messages[/bold]",
+        f"[green]{added} added[/green]" if added else "",
+        f"[yellow]{updated} updated/pending[/yellow]" if updated else "",
+        f"[dim]{unchanged} unchanged[/dim]" if unchanged else "",
+        f"[red]{errored} errors[/red]" if errored else "",
+    ]
+    console.print("  " + " · ".join(part for part in parts if part))
+    console.print()
+
+    if not ingest:
+        if source_ids_to_ingest:
+            _hint("Run [bold]wiki ingest --batch[/bold] to process the Slack digests into wiki pages.")
+        return
+
+    if not source_ids_to_ingest:
+        _warn("Nothing new to ingest.")
+        return
+
+    config = cfg.load_config(paths)
+    llm_cfg = config.get("llm", {})
+    host = llm_cfg.get("host", "http://localhost:11434")
+    model = llm_cfg.get("model", "qwen3:14b")
+
+    console.print(f"[dim]Checking Ollama at {host} …[/dim]")
+    llm_client = _llm_client_from_config(llm_cfg)
+    try:
+        try:
+            llm_client.ensure_ready()
+        except OllamaNotRunning as e:
+            _err(str(e))
+            raise typer.Exit(code=1)
+        except ModelNotFound as e:
+            _err(str(e))
+            raise typer.Exit(code=1)
+        except LLMError as e:
+            _err(f"LLM check failed: {e}")
+            raise typer.Exit(code=1)
+
+        _ok(f"Ollama ready · model=[bold]{model}[/bold]")
+
+        results = []
+        for source_id in source_ids_to_ingest:
+            cb = CliIngestCallbacks(mode="batch")
+            result = ingest_llm.ingest_source(
+                paths,
+                source_id,
+                llm_client,
+                cb,
+                mode="batch",
+                thinking_for_extraction=not no_thinking,
+            )
+            results.append(result)
+    finally:
+        llm_client.close()
+
+    ok_count = sum(1 for r in results if r.ok)
+    total_created = sum(r.pages_created for r in results)
+    total_updated = sum(r.pages_updated for r in results)
+    console.print()
+    console.rule("[bold]Slack ingest summary[/bold]")
     console.print(
         f"  [green]{ok_count} ingested[/green] · "
         f"[dim]{total_created} pages created, {total_updated} updated[/dim]"
@@ -932,7 +1164,7 @@ def ingest(
     # Verify Ollama is reachable before doing anything
     console.print()
     console.print(f"[dim]Checking Ollama at {host} …[/dim]")
-    client = OllamaClient(host=host, model=model)
+    client = _llm_client_from_config(llm_cfg)
     try:
         client.ensure_ready()
     except OllamaNotRunning as e:
@@ -1081,7 +1313,7 @@ def recompile(
 
     console.print()
     console.print(f"[dim]Checking Ollama at {host} …[/dim]")
-    client = OllamaClient(host=host, model=model)
+    client = _llm_client_from_config(llm_cfg)
     try:
         client.ensure_ready()
     except OllamaNotRunning as e:
@@ -1216,7 +1448,7 @@ def watch(
 
     console.print()
     console.print(f"[dim]Checking Ollama at {host} …[/dim]")
-    client = OllamaClient(host=host, model=model)
+    client = _llm_client_from_config(llm_cfg)
     try:
         client.ensure_ready()
     except OllamaNotRunning as e:
@@ -1484,7 +1716,7 @@ def query(
     # Connect to Ollama
     host = llm_cfg.get("host", "http://localhost:11434")
     model = llm_cfg.get("model", "qwen3:14b")
-    client = OllamaClient(host=host, model=model)
+    client = _llm_client_from_config(llm_cfg)
     try:
         client.ensure_ready()
     except OllamaNotRunning as e:
@@ -1524,7 +1756,7 @@ def reindex() -> None:
     """Force a full rebuild of the QMD search index.
 
     Normally this runs automatically after `wiki ingest`, so you only need
-    this if the index gets out of sync (e.g. you edited wiki pages manually).
+    this if the index gets out of sync (e.g. you edited team notes manually).
     """
     paths = _resolve_root_or_die()
     if not search.is_available():
@@ -1656,7 +1888,7 @@ def lint(
         llm_cfg = config.get("llm", {})
         host = llm_cfg.get("host", "http://localhost:11434")
         model = llm_cfg.get("model", "qwen3:14b")
-        client = OllamaClient(host=host, model=model)
+        client = _llm_client_from_config(llm_cfg)
         try:
             client.ensure_ready()
         except (OllamaNotRunning, ModelNotFound, LLMError) as e:

@@ -30,6 +30,10 @@
     {
       "query": "path:synthesis/",
       "color": { "a": 1, "rgb": 14701138 }
+    },
+    {
+      "query": "path:team-notes/",
+      "color": { "a": 1, "rgb": 12611584 }
     }
   ],
   "collapse-display": false,

@@ -178,8 +178,8 @@ updated: {today}
 
 # Wiki Index
 
-> This file is auto-maintained by the LLM-Wiki agent. It lists every wiki
-> page organized by category. Rebuilt after every ingest.
+> This file is auto-maintained by LLM-Wiki. It lists generated pages and
+> human-authored team notes by category. Rebuilt after every ingest.
 
 """
 
@@ -223,10 +223,15 @@ def rebuild_index(paths: cfg.WikiPaths, today: str) -> None:
         page_counts[subdir] = len(pages)
         _section(title, pages, subdir)
 
+    for subdir, title in cfg.HUMAN_WIKI_PAGE_KINDS:
+        pages = _list_pages_in(paths.wiki / subdir)
+        page_counts[subdir] = len(pages)
+        _section(title, pages, subdir)
+
     lines.append("---\n")
     stats_parts = [
         f"{page_counts.get(subdir, 0)} {title.lower()}"
-        for subdir, title in cfg.WIKI_PAGE_KINDS
+        for subdir, title in cfg.WIKI_PAGE_KINDS + cfg.HUMAN_WIKI_PAGE_KINDS
     ]
     lines.append(f"**Stats:** {' · '.join(stats_parts)}\n")
 

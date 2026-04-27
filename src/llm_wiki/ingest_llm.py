@@ -19,7 +19,7 @@ import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -207,9 +207,88 @@ def _parse_extraction(raw: str) -> Extraction:
     except json.JSONDecodeError as e:
         raise ValueError(f"Invalid JSON from LLM: {e}") from e
     try:
-        return Extraction(**data)
+        return Extraction(**_normalize_extraction_payload(data))
     except ValidationError as e:
         raise ValueError(f"JSON didn't match expected schema: {e}") from e
+
+
+def _normalize_extraction_payload(data: Any) -> dict[str, Any]:
+    """Coerce a few common LLM JSON shape mistakes into the expected schema."""
+    if not isinstance(data, dict):
+        return data
+
+    normalized = dict(data)
+    normalized["key_takeaways"] = _normalize_string_list(normalized.get("key_takeaways"))
+    normalized["quality_watchouts"] = _normalize_string_list(normalized.get("quality_watchouts"))
+    normalized["tags"] = _normalize_string_list(normalized.get("tags"))
+    normalized["entities"] = _normalize_object_list(normalized.get("entities"), default_type="entity")
+    normalized["concepts"] = _normalize_object_list(normalized.get("concepts"), default_type="concept")
+    normalized["facts"] = _normalize_object_list(normalized.get("facts"))
+    normalized["hypotheses"] = _normalize_object_list(normalized.get("hypotheses"))
+    return normalized
+
+
+def _normalize_string_list(value: Any) -> list[str]:
+    """Accept either a list of strings or a newline/comma-separated string."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        if not value.strip():
+            return []
+        if "\n" in value:
+            parts = value.splitlines()
+        else:
+            parts = value.split(",")
+        return [part.strip(" -\t") for part in parts if part.strip(" -\t")]
+    return [str(value).strip()] if str(value).strip() else []
+
+
+def _normalize_object_list(value: Any, default_type: str | None = None) -> list[dict[str, Any]]:
+    """Accept either a list of objects or a dict keyed by object name."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        items = value
+    elif isinstance(value, dict):
+        items = []
+        for key, raw_item in value.items():
+            if isinstance(raw_item, dict):
+                item = dict(raw_item)
+                item.setdefault("name", str(key))
+            else:
+                item = {"name": str(key), "description": str(raw_item)}
+            items.append(item)
+    else:
+        return []
+
+    normalized: list[dict[str, Any]] = []
+    for raw_item in items:
+        if isinstance(raw_item, dict):
+            item = dict(raw_item)
+        else:
+            item = {"name": str(raw_item), "description": str(raw_item)}
+
+        name = str(item.get("name") or "").strip()
+        description = str(item.get("description") or "").strip()
+        slug = str(item.get("slug") or "").strip()
+        item_type = str(item.get("type") or "").strip()
+
+        if not name and slug:
+            name = slug.replace("-", " ").title()
+        if not slug and name:
+            item["slug"] = slugify.slugify(name)
+        if name:
+            item["name"] = name
+        if description:
+            item["description"] = description
+        if default_type and not item_type:
+            item["type"] = default_type
+        if not item.get("name") and not item.get("description"):
+            continue
+        normalized.append(item)
+    return normalized
 
 
 def _build_excerpt(text: str, max_chars: int = EXCERPT_CHARS) -> str:

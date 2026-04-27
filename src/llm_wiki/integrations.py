@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import socket
 import subprocess
@@ -18,9 +19,48 @@ class LaunchResult:
     detail: str = ""
 
 
+def _is_wsl() -> bool:
+    """Best-effort detection for Windows Subsystem for Linux."""
+    if not sys.platform.startswith("linux"):
+        return False
+    if os.environ.get("WSL_DISTRO_NAME"):
+        return True
+    try:
+        return "microsoft" in Path("/proc/version").read_text(encoding="utf-8").lower()
+    except OSError:
+        return False
+
+
+def _is_windows_mount(path: Path) -> bool:
+    """True when the path lives on a Windows drive mounted into WSL."""
+    parts = path.resolve().parts
+    return len(parts) >= 3 and parts[1] == "mnt" and len(parts[2]) == 1
+
+
+def _wsl_to_windows_path(path: Path) -> str | None:
+    """Convert a WSL path to a Windows path using `wslpath -w`."""
+    try:
+        result = subprocess.run(
+            ["wslpath", "-w", str(path.resolve())],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+    except (FileNotFoundError, OSError, subprocess.SubprocessError):
+        return None
+    converted = result.stdout.strip()
+    return converted or None
+
+
 def obsidian_uri_for_path(path: Path) -> str:
     """Build an Obsidian URI that opens the note containing this path."""
-    return f"obsidian://open?path={quote(str(path.resolve()))}"
+    resolved = path.resolve()
+    if _is_wsl() and _is_windows_mount(resolved):
+        windows_path = _wsl_to_windows_path(resolved)
+        if windows_path:
+            return f"obsidian://open?path={quote(windows_path)}"
+    return f"obsidian://open?path={quote(str(resolved))}"
 
 
 def open_external_url(url: str) -> LaunchResult:
@@ -57,6 +97,32 @@ def open_external_url(url: str) -> LaunchResult:
 
 def open_in_obsidian(target_path: Path) -> LaunchResult:
     """Open a wiki note in Obsidian via the registered obsidian:// handler."""
+    resolved = target_path.resolve()
+
+    if _is_wsl() and not _is_windows_mount(resolved):
+        obsidian_bin = shutil.which("obsidian")
+        if obsidian_bin:
+            try:
+                subprocess.Popen(
+                    [obsidian_bin, str(resolved)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                return LaunchResult(True, "obsidian")
+            except OSError as e:
+                return LaunchResult(False, "obsidian", str(e))
+
+        return LaunchResult(
+            False,
+            "obsidian",
+            (
+                "Windows Obsidian can't reliably open vaults stored inside the WSL "
+                "filesystem (for example /home/... or \\\\wsl.localhost\\...). "
+                "Move the repo under /mnt/c/... to use Windows Obsidian, or install "
+                "Obsidian inside WSL/WSLg and try again."
+            ),
+        )
+
     result = open_external_url(obsidian_uri_for_path(target_path))
     if result.launched:
         return result

@@ -39,7 +39,9 @@ def scaffold(root: Path, force: bool = False) -> cfg.WikiPaths:
                     graph.json
                 index.md
                 log.md
-                sources/, entities/, concepts/, synthesis/   (gitkeep each)
+                sources/, entities/, concepts/, facts/,
+                hypotheses/, synthesis/                      (gitkeep each)
+                team-notes/                                 (human-edited, gitkeep)
             schema/
                 AGENTS.md
             .wiki/
@@ -75,6 +77,10 @@ def scaffold(root: Path, force: bool = False) -> cfg.WikiPaths:
     # 2. Empty subdirectories with .gitkeep so git tracks them
     (paths.raw / ".gitkeep").touch()
     for sub in cfg.WIKI_SUBDIRS:
+        d = paths.wiki / sub
+        d.mkdir(parents=True, exist_ok=True)
+        (d / ".gitkeep").touch()
+    for sub in cfg.HUMAN_WIKI_SUBDIRS:
         d = paths.wiki / sub
         d.mkdir(parents=True, exist_ok=True)
         (d / ".gitkeep").touch()

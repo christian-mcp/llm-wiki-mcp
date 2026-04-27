@@ -36,3 +36,28 @@ type: log
 - created: [[facts/rafael-gallegos-weather-commodities]]
 - created: [[sources/mcp-research-team-paper-assignment-profiles]]
 
+## [2026-04-27] ingest | Slack digest: #ai last 7 days
+
+- created: [[entities/les-finemore]]
+- updated: [[entities/jp-sada]]
+- updated: [[entities/hector-gomez]]
+- created: [[entities/anthropic]]
+- created: [[entities/noaa]]
+- created: [[entities/fere-ai]]
+- created: [[entities/hugging-face]]
+- created: [[entities/openclaw-convention]]
+- created: [[entities/ethereal-ventures]]
+- created: [[entities/mcp]]
+- created: [[entities/llm-wiki]]
+- created: [[concepts/agentic-systems]]
+- created: [[concepts/ai-in-finance]]
+- created: [[concepts/weather-forecasting-with-ai]]
+- created: [[concepts/self-improving-ai-agents]]
+- created: [[concepts/open-source-ai-tools]]
+- created: [[facts/anthropic-40b-investment]]
+- created: [[facts/noaa-aigfs-efficiency]]
+- created: [[facts/fere-ai-10m-funding]]
+- created: [[facts/hugging-face-ml-intern]]
+- created: [[facts/llm-wiki-slack-integration]]
+- created: [[sources/slack-digest-ai-channel-updates-april-2026]]
+

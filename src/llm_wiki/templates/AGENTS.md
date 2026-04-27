@@ -10,7 +10,7 @@
 ```
 .
 ├── raw/         ← Source documents. IMMUTABLE. Read-only for the agent.
-├── wiki/        ← LLM-maintained markdown. The agent owns this layer entirely.
+├── wiki/        ← Markdown vault. Generated folders are agent-owned.
 │   ├── index.md
 │   ├── log.md
 │   ├── sources/       ← One summary page per ingested source.
@@ -18,9 +18,13 @@
 │   ├── concepts/      ← Topics, techniques, theories, ideas.
 │   ├── facts/         ← Evidence-backed claims or findings.
 │   ├── hypotheses/    ← Tentative claims, conjectures, open questions.
-│   └── synthesis/     ← Cross-source summaries, comparisons, evolving theses.
+│   ├── synthesis/     ← Cross-source summaries, comparisons, evolving theses.
+│   └── team-notes/    ← Human-authored notes. Safe for Obsidian editing.
 └── schema/AGENTS.md   ← This file.
 ```
+
+Generated folders under `wiki/` are agent-maintained. `wiki/team-notes/` is
+human-maintained and must not be overwritten during normal ingest/recompile.
 
 ## 2. Page conventions
 
@@ -122,6 +126,7 @@ The quality-review agent is a skeptic, not a drafter. It should look for:
 ## 7. What the agent must never do
 
 - Never edit `raw/`.
+- Never overwrite `wiki/team-notes/` unless the user explicitly asks.
 - Never delete a wiki page without explicit user confirmation.
 - Never present a hypothesis as established fact.
 - Never invent citations or supporting evidence.

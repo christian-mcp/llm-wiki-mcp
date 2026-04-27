@@ -248,6 +248,14 @@ Run `wiki obsidian`. Obsidian gives you:
 - Graph view with filters
 - Search across all content
 
+On Windows + WSL, note that Windows Obsidian cannot reliably open vaults stored
+inside the Linux filesystem (`/home/...`, which shows up as
+`\\wsl.localhost\...`). If your repo lives there, either move it to a Windows
+path under `/mnt/c/...` or install Obsidian inside WSL/WSLg instead.
+
+For human-written notes, create markdown files in `wiki/team-notes/`. That
+folder is safe to edit by hand and is not deleted by `wiki recompile`.
+
 #### 3. Terminal
 
 ```bash
@@ -342,6 +350,23 @@ wiki ingest 3                           # Ingest a specific source by ID
 wiki ingest --dry-run                   # Show what would be done without doing it
 ```
 
+### Importing Slack
+
+```bash
+export SLACK_BOT_TOKEN="xoxb-..."
+
+wiki slack-ingest                       # Fetch default channels into raw/slack/
+wiki slack-ingest --ingest              # Fetch and immediately run LLM ingest
+wiki slack-ingest --days 14             # Change the lookback window
+wiki slack-ingest -c sprints -c ai      # Override the default channel list
+wiki slack-ingest --no-threads          # Skip thread replies for a faster run
+```
+
+The default channels are `#academic-research`, `#quant-research`, `#ai`,
+`#risk`, and `#markets`. The Slack app needs `channels:read`,
+`channels:history`, and `users:read`; add `groups:read` and `groups:history`
+for private channels. Incoming webhook URLs cannot read Slack history.
+
 ### Querying the wiki
 
 ```bash
@@ -373,7 +398,7 @@ wiki lint --fix                         # Auto-fix mechanical issues
 wiki lint --deep                        # Add LLM contradiction detection (slow)
 
 wiki reindex                            # Force rebuild of the search index
-                                        # Use after manually editing wiki pages
+                                        # Use after manually editing wiki/team-notes/
 ```
 
 ### Running the web UI

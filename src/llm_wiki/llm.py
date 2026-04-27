@@ -13,6 +13,7 @@ layers (ingest_llm.py) orchestrate multi-pass pipelines.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from typing import Generator, Iterator
 
@@ -20,7 +21,19 @@ import httpx
 
 DEFAULT_HOST = "http://localhost:11434"
 DEFAULT_MODEL = "qwen3:14b"
-DEFAULT_TIMEOUT = 300.0  # 5 minutes — thinking-mode extraction can be slow
+DEFAULT_TIMEOUT = 900.0  # 15 minutes — long extracts and CPU runs can be slow
+
+
+def _default_timeout() -> float:
+    """Allow an env override without requiring every caller to plumb it through."""
+    raw = os.environ.get("LLM_WIKI_OLLAMA_TIMEOUT")
+    if not raw:
+        return DEFAULT_TIMEOUT
+    try:
+        value = float(raw)
+    except ValueError:
+        return DEFAULT_TIMEOUT
+    return value if value > 0 else DEFAULT_TIMEOUT
 
 
 class LLMError(Exception):
@@ -48,12 +61,12 @@ class OllamaClient:
         self,
         host: str = DEFAULT_HOST,
         model: str = DEFAULT_MODEL,
-        timeout: float = DEFAULT_TIMEOUT,
+        timeout: float | None = None,
     ):
         self.host = host.rstrip("/")
         self.model = model
-        self.timeout = timeout
-        self._client = httpx.Client(timeout=timeout)
+        self.timeout = timeout if timeout is not None else _default_timeout()
+        self._client = httpx.Client(timeout=self.timeout)
 
     def close(self) -> None:
         self._client.close()

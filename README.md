@@ -28,6 +28,26 @@ cd llm-wiki-mcp/research-wiki
 ../.venv/bin/wiki obsidian
 ```
 
+If you're using Windows Obsidian from a WSL checkout under `~/...`, that will
+fail because Obsidian can't reliably open vaults over `\\wsl.localhost\...`.
+Use one of these setups instead:
+- keep the repo on a Windows path like `/mnt/c/Users/<you>/...` and open it with Windows Obsidian
+- or install Obsidian inside WSL/WSLg and open the vault there
+
+For safe human edits, write your own notes in `research-wiki/wiki/team-notes/`.
+That folder is searchable, included in Quartz, and preserved across
+`wiki recompile`.
+
+## Edit In Obsidian
+
+1. Open `llm-wiki-mcp/research-wiki/wiki` as a vault in Obsidian.
+2. Keep human-authored notes inside `team-notes/`.
+3. Run `../.venv/bin/wiki reindex` from `research-wiki/` after manual edits so local search sees the new notes.
+4. Commit and push to `main` to have Quartz / GitHub Pages republish automatically.
+
+The vault lives inside the git repo, so the Obsidian Git plugin can auto-commit
+and auto-push if you want the publish flow to feel hands-off.
+
 To make the web UI shareable on the same LAN or VPN:
 
 ```bash
@@ -68,6 +88,40 @@ cd research-wiki
 ../.venv/bin/wiki serve
 ```
 
+## Import Slack Channels
+
+`wiki slack-ingest` fetches the last 7 days from the default research channels
+and saves one markdown digest per channel under `raw/slack/`.
+
+```bash
+cd llm-wiki-mcp/research-wiki
+export SLACK_BOT_TOKEN="xoxb-..."
+
+../.venv/bin/wiki slack-ingest --ingest
+```
+
+Default channels:
+
+```text
+#academic-research
+#quant-research
+#ai
+#risk
+#markets
+```
+
+Required Slack app scopes:
+
+```text
+channels:read
+channels:history
+users:read
+```
+
+Add `groups:read` and `groups:history` if any target channel is private. Invite
+the bot to each channel before importing. Incoming webhook URLs are only for
+posting into Slack; they cannot read channel history.
+
 Feel free to fork and don't forget to give it a Star ⭐️ for better reach!
 
 -------------------------
@@ -84,7 +138,7 @@ Let's connect on LinkedIn for a Chat: https://www.linkedin.com/in/niharshrotri/
 
 Built on the pattern Andrej Karpathy described in his [LLM Wiki gist](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f): instead of retrieving from raw documents at query time (classic RAG), an LLM incrementally **compiles** your sources into a structured, cross-linked markdown wiki that sits between you and the raw documents. The wiki is a **persistent, compounding artifact** — the cross-references are already there, the contradictions have already been flagged, the synthesis already reflects everything you've read.
 
-You never write the wiki yourself. The LLM does all the grunt work: summarizing, cross-referencing, filing, bookkeeping. You bring the sources and ask the questions.
+You do not need to hand-maintain the generated wiki pages yourself. The LLM does all the grunt work: summarizing, cross-referencing, filing, bookkeeping. Human-authored notes can live in `wiki/team-notes/` and publish alongside the generated pages.
 
 Runs 100% locally on Apple Silicon or anywhere Ollama works. No API keys, no cloud, no data leaving your machine.
 
@@ -144,9 +198,10 @@ A full web interface at `http://127.0.0.1:8000` after `wiki serve`:
 
 ### Obsidian integration
 The `wiki/` folder is a ready-made Obsidian vault with:
-- Color-coded graph view (sources, entities, concepts, synthesis each get their own color)
+- Color-coded graph view (sources, entities, concepts, synthesis, and team notes each get their own color)
 - YAML frontmatter compatible with the Dataview plugin
 - All cross-references as native `[[wikilinks]]` so backlinks, outgoing-links, and graph traversal all work
+- A dedicated `team-notes/` folder for personal or team-authored markdown that stays safe during recompiles
 
 ## Architecture
 
@@ -168,7 +223,7 @@ Three layers, per Karpathy:
 ```
 
 - **`raw/`** — your source documents. Immutable. The agent reads but never modifies.
-- **`wiki/`** — LLM-maintained markdown. One folder per page type (`sources/`, `entities/`, `concepts/`, `facts/`, `hypotheses/`, `synthesis/`) plus auto-generated `index.md` and `log.md`. Open this in Obsidian.
+- **`wiki/`** — Markdown vault. Generated pages live in `sources/`, `entities/`, `concepts/`, `facts/`, `hypotheses/`, and `synthesis/`. Human-edited notes belong in `team-notes/`. Open this whole folder in Obsidian.
 - **`schema/AGENTS.md`** — the conventions file. Tells the LLM how to format pages, when to merge vs create, how to cite, how to handle contradictions. Edit as your preferences evolve.
 - **`.wiki/`** — internal state: SQLite ingest history, QMD search index, config. Git-ignored.
 
